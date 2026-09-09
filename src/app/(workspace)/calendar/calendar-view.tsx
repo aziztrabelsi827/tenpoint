@@ -39,6 +39,8 @@ const GRID_HEIGHT = "calc(100vh - 11rem)";
 const SNAP = 15;
 const DAY_START_HOUR = 0;
 const TOTAL_MINUTES = 24 * 60;
+/** Movement (px) that turns a pointer press into a scroll/drag gesture. */
+const TAP_THRESHOLD = 10;
 
 const EVENT_KINDS = ["event", "work", "personal", "focus", "health"];
 const KIND_COLOR: Record<string, string> = {
@@ -84,6 +86,12 @@ type DragState =
   | { mode: "resize"; key: string; end: number; originY: number }
   | null;
 
+/** A confirmed tap on an empty time slot, anchored to the pointer position. */
+type SlotChoice = { day: string; start: string; end: string; x: number; y: number };
+
+/** In-progress press on an empty slot that may become a tap. */
+type PendingTap = { x: number; y: number; day: string; eligible: boolean };
+
 export function CalendarView() {
   const {
     habits, logs, occurrences, tasks, events, focus, taskProgress,
@@ -113,6 +121,16 @@ export function CalendarView() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [createMenu, setCreateMenu] = useState(false);
   const [taskModal, setTaskModal] = useState(false);
+  /** Empty-slot tap target for the creation-type chooser. */
+  const [slotChooser, setSlotChooser] = useState<SlotChoice | null>(null);
+  /** New-task prefill captured from the chosen slot (otherwise toolbar default). */
+  const [draftTask, setDraftTask] = useState<{ day: string; start: string; end: string } | null>(null);
+  const [editingTask, setEditingTask] = useState<TaskDTO | null>(null);
+  /** Desktop (sm+) anchors the chooser to the slot; mobile renders a bottom sheet. */
+  const [isDesktop, setIsDesktop] = useState(false);
+  /** Pointer presses on empty slots, keyed by pointerId (never opens in pointerdown). */
+  const pendingTapsRef = useRef(new Map<number, PendingTap>());
+  const createMenuRef = useRef<HTMLDivElement | null>(null);
 
   /**
    * Keep the selected day inside the visible period.
@@ -164,6 +182,19 @@ export function CalendarView() {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, 7 * HOUR_HEIGHT - HOUR_HEIGHT);
   }, [view]);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 640px)");
+    const update = () => setIsDesktop(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    if (!createMenu) return;
+    createMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+  }, [createMenu]);
 
   const tzLabel = useMemo(() => timezoneLabel(timezone), [timezone]);
 
@@ -407,8 +438,16 @@ export function CalendarView() {
       }
       // Clicking a task block opens its editor; completion is a separate control
       // inside the editor, so a calendar click never silently toggles status.
+      if (item.source === "task") {
+        const t = tasks.find((x) => x.id === item.id);
+        if (t) {
+          setDraftTask(null);
+          setEditingTask(t);
+          setTaskModal(true);
+        }
+      }
     },
-    [events],
+    [events, tasks],
   );
 
   /* ---------------- drag & resize ---------------- */
@@ -521,14 +560,84 @@ export function CalendarView() {
     setGhost({ key: item.key, day: "", start: 0, end: item.end });
   }
 
-  function openSlot(day: string, clientY: number) {
-    const grid = gridRef.current;
-    if (!grid) return;
-    const rect = grid.getBoundingClientRect();
-    const minutes = clampMin(snap(((clientY - rect.top) / HOUR_HEIGHT) * 60 + DAY_START_HOUR * 60));
-    setDraftSlot({ day, start: minutesToTime(minutes), end: minutesToTime(minutes + 60) });
+  /** Records an empty-slot press. Nothing is opened from pointerdown/touchstart. */
+  function onSlotPointerDown(e: React.PointerEvent, day: string) {
+    if (e.target !== e.currentTarget) return;
+    // Cancel the browser's compatibility mouse/click pair that follows a touch
+    // tap, so it cannot immediately hit any UI we render in response.
+    if (e.pointerType === "touch" || e.pointerType === "pen") e.preventDefault();
+    pendingTapsRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY, day, eligible: true });
+  }
+
+  // Turns a still press into the creation-type chooser only when the pointer
+  // never moved past the tap threshold. A touch scroll fires pointercancel (or
+  // large pointermovements), so scrolling over the grid never opens the UI.
+  useEffect(() => {
+    function onSlotPointerMove(e: PointerEvent) {
+      const t = pendingTapsRef.current.get(e.pointerId);
+      if (!t) return;
+      if (Math.hypot(e.clientX - t.x, e.clientY - t.y) > TAP_THRESHOLD) t.eligible = false;
+    }
+    function onSlotPointerUp(e: PointerEvent) {
+      const t = pendingTapsRef.current.get(e.pointerId);
+      pendingTapsRef.current.delete(e.pointerId);
+      if (!t || !t.eligible) return;
+      const grid = gridRef.current;
+      if (!grid) return;
+      const rect = grid.getBoundingClientRect();
+      const minutes = clampMin(snap(((t.y - rect.top) / HOUR_HEIGHT) * 60 + DAY_START_HOUR * 60));
+      setSlotChooser({
+        day: t.day,
+        start: minutesToTime(minutes),
+        end: minutesToTime(minutes + 60),
+        x: e.clientX,
+        y: e.clientY,
+      });
+    }
+    function onSlotPointerCancel(e: PointerEvent) {
+      pendingTapsRef.current.delete(e.pointerId);
+    }
+    window.addEventListener("pointermove", onSlotPointerMove);
+    window.addEventListener("pointerup", onSlotPointerUp);
+    window.addEventListener("pointercancel", onSlotPointerCancel);
+    return () => {
+      window.removeEventListener("pointermove", onSlotPointerMove);
+      window.removeEventListener("pointerup", onSlotPointerUp);
+      window.removeEventListener("pointercancel", onSlotPointerCancel);
+    };
+  }, []);
+
+  function closeSlotChooser() {
+    setSlotChooser(null);
+  }
+
+  function chooseTaskFromSlot() {
+    const s = slotChooser;
+    if (!s) return;
+    closeSlotChooser();
+    setEditingTask(null);
+    setDraftTask({ day: s.day, start: s.start, end: s.end });
+    setTaskModal(true);
+  }
+
+  function chooseEventFromSlot() {
+    const s = slotChooser;
+    if (!s) return;
+    closeSlotChooser();
+    setDraftSlot({ day: s.day, start: s.start, end: s.end });
     setEditingEvent(null);
     setEventModal(true);
+  }
+
+  /** Moves focus between the toolbar Create-menu items. */
+  function nudgeMenuFocus(delta: number) {
+    const el = createMenuRef.current;
+    if (!el) return;
+    const items = Array.from(el.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+    if (items.length === 0) return;
+    const idx = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = items[(idx + delta + items.length) % items.length];
+    next?.focus();
   }
 
   function shift(dir: -1 | 1) {
@@ -643,19 +752,33 @@ export function CalendarView() {
             <>
               <div className="fixed inset-0 z-40" onClick={() => setCreateMenu(false)} aria-hidden />
               <div
+                ref={createMenuRef}
                 role="menu"
-                className="absolute right-0 z-50 mt-1 w-44 overflow-hidden"
+                aria-label="Create new calendar entry"
+                className="absolute right-0 z-50 mt-1 w-56 overflow-hidden"
                 style={{
                   background: "var(--card)",
                   border: "1px solid var(--line)",
                   borderRadius: "var(--radius-sm)",
                   boxShadow: "var(--shadow)",
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setCreateMenu(false);
+                  } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+                    e.preventDefault();
+                    nudgeMenuFocus(1);
+                  } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                    e.preventDefault();
+                    nudgeMenuFocus(-1);
+                  }
+                }}
               >
                 <button
                   type="button"
                   role="menuitem"
-                  className="block w-full px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-[var(--bg-subtle)]"
+                  className="block w-full px-3 py-3 text-left transition-colors hover:bg-[var(--bg-subtle)]"
                   onClick={() => {
                     setCreateMenu(false);
                     setDraftSlot({ day: selected, start: "09:00", end: "10:00" });
@@ -663,19 +786,26 @@ export function CalendarView() {
                     setEventModal(true);
                   }}
                 >
-                  🗓 Event
+                  <span className="block text-sm font-semibold">Create event</span>
+                  <span className="block text-[11px]" style={{ color: "var(--fg-muted)" }}>
+                    Block out non-scoring time
+                  </span>
                 </button>
                 <button
                   type="button"
                   role="menuitem"
-                  className="block w-full border-t px-3 py-2.5 text-left text-sm font-semibold transition-colors hover:bg-[var(--bg-subtle)]"
+                  className="block w-full border-t px-3 py-3 text-left transition-colors hover:bg-[var(--bg-subtle)]"
                   style={{ borderColor: "var(--line)" }}
                   onClick={() => {
                     setCreateMenu(false);
+                    setEditingTask(null);
                     setTaskModal(true);
                   }}
                 >
-                  ✓ Task
+                  <span className="block text-sm font-semibold">Create task</span>
+                  <span className="block text-[11px]" style={{ color: "var(--fg-muted)" }}>
+                    Track a task with its own reward
+                  </span>
                 </button>
               </div>
             </>
@@ -843,7 +973,7 @@ export function CalendarView() {
               {/* All-day lane: habits */}
               {showHabits ? (
                 <div
-                  className="grid border-b"
+                  className="hidden border-b lg:grid"
                   style={{
                     borderColor: "var(--line)",
                     background: "var(--card-alt)",
@@ -953,10 +1083,7 @@ export function CalendarView() {
                               ? "color-mix(in srgb, var(--primary) 3%, var(--card))"
                               : "transparent",
                         }}
-                        onPointerDown={(e) => {
-                          if (e.target !== e.currentTarget) return;
-                          openSlot(d, e.clientY);
-                        }}
+                        onPointerDown={(e) => onSlotPointerDown(e, d)}
                       >
                         {/* hour lines */}
                         {Array.from({ length: 24 }, (_, h) => (
@@ -1013,13 +1140,24 @@ export function CalendarView() {
       </div>
 
       <TaskEditor
-        key={`cal-task-${taskModal}`}
+        key={`cal-task-${taskModal}-${editingTask?.id ?? draftTask?.day ?? "x"}-${draftTask?.start ?? "x"}`}
         open={taskModal}
-        onClose={() => setTaskModal(false)}
+        onClose={() => {
+          setTaskModal(false);
+          setEditingTask(null);
+          setDraftTask(null);
+        }}
         habits={habits}
-        task={null}
-        defaultDay={selected}
+        task={editingTask}
+        defaultDay={editingTask?.day ?? draftTask?.day ?? selected}
+        defaultStartTime={editingTask?.startTime ?? draftTask?.start}
+        defaultEndTime={editingTask?.endTime ?? draftTask?.end}
         onSubmit={async (payload) => {
+          if (editingTask) {
+            await updateTask(editingTask.id, payload as Partial<TaskDTO>);
+            toast.push("Task updated");
+            return;
+          }
           await createTask({
             title: payload.title ?? "",
             notes: payload.notes,
@@ -1083,6 +1221,180 @@ export function CalendarView() {
             : undefined
         }
       />
+
+      {slotChooser ? (
+        <SlotCreateMenu
+          slot={slotChooser}
+          isDesktop={isDesktop}
+          onTask={chooseTaskFromSlot}
+          onEvent={chooseEventFromSlot}
+          onClose={closeSlotChooser}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- */
+/* Slot creation-type chooser                                       */
+/* ---------------------------------------------------------------- */
+
+function SlotCreateMenu({
+  slot,
+  isDesktop,
+  onTask,
+  onEvent,
+  onClose,
+}: {
+  slot: { day: string; start: string; end: string; x: number; y: number };
+  isDesktop: boolean;
+  onTask: () => void;
+  onEvent: () => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuWidth = 256;
+  const menuHeight = 232;
+  const openedAtRef = useRef<number>(0);
+
+  useEffect(() => {
+    openedAtRef.current = performance.now();
+  }, []);
+
+  // A tap opens this menu; some browsers then dispatch a compatibility mouse
+  // click a few hundred ms later. Ignore backdrop clicks in that window so the
+  // menu does not close itself immediately after being opened by a touch tap.
+  function backdropClick() {
+    if (performance.now() - openedAtRef.current > 400) onClose();
+  }
+
+  // Focus the first choice and return focus to the previous element on dismiss.
+  useEffect(() => {
+    const returnTo = document.activeElement;
+    requestAnimationFrame(() => {
+      const first = menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]');
+      first?.focus();
+    });
+    return () => {
+      if (returnTo instanceof HTMLElement && document.contains(returnTo)) returnTo.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  function nudge(delta: number) {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+    if (items.length === 0) return;
+    const idx = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = items[(idx + delta + items.length) % items.length];
+    next?.focus();
+  }
+
+  const desktopStyle = {
+    width: menuWidth,
+    left: Math.max(8, Math.min(slot.x + 8, window.innerWidth - menuWidth - 16)),
+    top: Math.max(8, Math.min(slot.y + 8, window.innerHeight - menuHeight - 16)),
+  };
+
+  return (
+    <div className="fixed inset-0 z-[80]">
+      {/* Dismissal backdrop; native scroll still works over it. */}
+      <div className="absolute inset-0" onClick={backdropClick} aria-hidden />
+      <div
+        ref={menuRef}
+        role="menu"
+        aria-label="Create a new calendar entry"
+        className="absolute"
+        style={isDesktop ? desktopStyle : { left: 12, right: 12, bottom: 12 }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+            e.preventDefault();
+            nudge(1);
+          } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+            e.preventDefault();
+            nudge(-1);
+          } else if (e.key === "Home") {
+            e.preventDefault();
+            menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+          }
+        }}
+      >
+        <div
+          className="overflow-hidden"
+          style={{
+            background: "var(--card)",
+            border: "1px solid var(--line)",
+            borderRadius: "calc(var(--radius-sm) * 1.2)",
+            boxShadow: "var(--shadow)",
+          }}
+        >
+          <p
+            className="border-b px-3 py-2 text-[11px] font-bold uppercase tracking-wider"
+            style={{ borderColor: "var(--line)", color: "var(--fg-subtle)" }}
+          >
+            {formatMedium(slot.day)} · {slot.start}
+          </p>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-3 px-3 py-3 text-left transition-colors hover:bg-[var(--bg-subtle)]"
+            onClick={onTask}
+          >
+            <span
+              className="grid h-9 w-9 shrink-0 place-items-center text-base"
+              style={{ background: "color-mix(in srgb, var(--positive) 14%, var(--card))", borderRadius: "var(--radius-sm)" }}
+              aria-hidden
+            >
+              ✓
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-bold">Create task</span>
+              <span className="block text-[11px]" style={{ color: "var(--fg-muted)" }}>
+                Track progress from this slot
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-3 border-t px-3 py-3 text-left transition-colors hover:bg-[var(--bg-subtle)]"
+            style={{ borderColor: "var(--line)" }}
+            onClick={onEvent}
+          >
+            <span
+              className="grid h-9 w-9 shrink-0 place-items-center text-base"
+              style={{ background: "color-mix(in srgb, var(--primary) 14%, var(--card))", borderRadius: "var(--radius-sm)" }}
+              aria-hidden
+            >
+              🗓
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-bold">Create event</span>
+              <span className="block text-[11px]" style={{ color: "var(--fg-muted)" }}>
+                Add non-scoring calendar time
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="w-full border-t px-3 py-3 text-left text-sm font-semibold transition-colors hover:bg-[var(--bg-subtle)]"
+            style={{ borderColor: "var(--line)", color: "var(--fg-muted)" }}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

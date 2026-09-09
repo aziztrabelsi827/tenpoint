@@ -456,6 +456,8 @@ export function TaskEditor({
   habits,
   task,
   defaultDay,
+  defaultStartTime,
+  defaultEndTime,
   onSubmit,
 }: {
   open: boolean;
@@ -463,6 +465,9 @@ export function TaskEditor({
   habits: { id: number; name: string; icon: string }[];
   task: TaskDTO | null;
   defaultDay: string;
+  /** Prefill the start/end time for a NEW task (used by the calendar slot flow). */
+  defaultStartTime?: string;
+  defaultEndTime?: string;
   onSubmit: (payload: TaskSubmitPayload) => Promise<void>;
 }) {
   const [title, setTitle] = useState("");
@@ -484,7 +489,9 @@ export function TaskEditor({
   const [error, setError] = useState("");
 
   const [syncKey, setSyncKey] = useState("");
-  const currentKey = task ? `t${task.id}` : "new";
+  const currentKey = task
+    ? `t${task.id}`
+    : `n${defaultDay}-${defaultStartTime ?? ""}-${defaultEndTime ?? ""}`;
   if (open && currentKey !== syncKey) {
     setSyncKey(currentKey);
     setTitle(task?.title ?? "");
@@ -501,8 +508,8 @@ export function TaskEditor({
     );
     setProgressDay(task?.day ?? defaultDay);
     setDay(task?.day ?? defaultDay);
-    setStartTime(task?.startTime ?? "");
-    setEndTime(task?.endTime ?? "");
+    setStartTime(task?.startTime ?? defaultStartTime ?? "");
+    setEndTime(task?.endTime ?? defaultEndTime ?? "");
     setHabitId(task?.habitId ? String(task.habitId) : "");
     setError("");
   }
