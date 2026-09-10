@@ -4,7 +4,7 @@ import { ensureSettings } from "@/lib/data";
 import { isValidTimezone, normaliseTimezone, todayInZone } from "@/lib/timezone";
 import type { SettingsDTO } from "@/lib/types";
 
-const THEMES = ["soft", "productivity", "dark", "nature", "brutalist", "custom"];
+const THEMES = ["soft", "productivity", "dark", "nature", "brutalist", "sunset", "aurora", "paper", "custom"];
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
 export async function PATCH(request: Request) {

@@ -4,6 +4,9 @@ export type ThemeId =
   | "dark"
   | "nature"
   | "brutalist"
+  | "sunset"
+  | "aurora"
+  | "paper"
   | "custom";
 
 export type ThemeTokens = {
@@ -30,6 +33,13 @@ export type ThemeTokens = {
   tracking: string;
   uppercase: string;
   gridLine: string;
+  fontHeading: string;
+  fontBody: string;
+  fontData: string;
+  surface1: string;
+  surface2: string;
+  shadowGlow: string;
+  bgGradient: string;
 };
 
 export type ThemeMeta = {
@@ -65,6 +75,13 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     tracking: "-0.01em",
     uppercase: "none",
     gridLine: "#efe6d6",
+    fontHeading: "var(--font-newsreader)",
+    fontBody: "var(--font-dm-sans)",
+    fontData: "var(--font-dm-sans)",
+    surface1: "#fefcf6",
+    surface2: "#fff9ee",
+    shadowGlow: "0 0 20px rgba(217, 138, 99, 0.15)",
+    bgGradient: "radial-gradient(ellipse at 20% 0%, rgba(217,138,99,0.06) 0%, transparent 50%)",
   },
   productivity: {
     bg: "#f4f5f7",
@@ -90,6 +107,13 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     tracking: "-0.015em",
     uppercase: "uppercase",
     gridLine: "#eef0f3",
+    fontHeading: "var(--font-dm-sans)",
+    fontBody: "var(--font-inter)",
+    fontData: "var(--font-inter)",
+    surface1: "#ffffff",
+    surface2: "#f0f2f5",
+    shadowGlow: "0 0 24px rgba(37, 99, 235, 0.12)",
+    bgGradient: "none",
   },
   dark: {
     bg: "#0d1015",
@@ -115,6 +139,13 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     tracking: "-0.01em",
     uppercase: "none",
     gridLine: "#1e242e",
+    fontHeading: "var(--font-space-grotesk)",
+    fontBody: "var(--font-inter)",
+    fontData: "var(--font-space-grotesk)",
+    surface1: "#1a2030",
+    surface2: "#1e2535",
+    shadowGlow: "0 0 30px rgba(91, 141, 239, 0.1)",
+    bgGradient: "radial-gradient(ellipse at 50% 0%, rgba(91,141,239,0.04) 0%, transparent 60%)",
   },
   nature: {
     bg: "#eef1e6",
@@ -140,6 +171,13 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     tracking: "-0.005em",
     uppercase: "none",
     gridLine: "#e6ebd9",
+    fontHeading: "var(--font-newsreader)",
+    fontBody: "var(--font-ibm-plex-sans)",
+    fontData: "var(--font-ibm-plex-mono)",
+    surface1: "#f5f8ef",
+    surface2: "#ecf0e4",
+    shadowGlow: "0 0 20px rgba(77, 124, 74, 0.1)",
+    bgGradient: "radial-gradient(ellipse at 80% 100%, rgba(77,124,74,0.05) 0%, transparent 50%)",
   },
   brutalist: {
     bg: "#fdfdfb",
@@ -165,6 +203,109 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     tracking: "-0.02em",
     uppercase: "uppercase",
     gridLine: "#deded8",
+    fontHeading: "var(--font-ibm-plex-mono)",
+    fontBody: "var(--font-ibm-plex-mono)",
+    fontData: "var(--font-ibm-plex-mono)",
+    surface1: "#f4f4f0",
+    surface2: "#eaeae5",
+    shadowGlow: "4px 4px 0 0 var(--primary)",
+    bgGradient: "none",
+  },
+  sunset: {
+    bg: "#faf5ee",
+    bgSubtle: "#f3ece0",
+    card: "#fffcf6",
+    cardAlt: "#f8f0e3",
+    line: "#e8d5bc",
+    lineStrong: "#d4bda0",
+    fg: "#3a2e22",
+    fgMuted: "#7a6850",
+    fgSubtle: "#a89278",
+    primary: "#c26e3d",
+    primaryFg: "#ffffff",
+    accent: "#d4976a",
+    positive: "#7a9e5c",
+    warn: "#d4a843",
+    danger: "#c95a4a",
+    radius: "16px",
+    radiusSm: "10px",
+    shadow: "0 10px 30px -18px rgba(139, 80, 30, 0.3)",
+    shadowSm: "0 4px 12px -8px rgba(139, 80, 30, 0.25)",
+    headingWeight: "650",
+    tracking: "-0.01em",
+    uppercase: "none",
+    gridLine: "#ede0ce",
+    fontHeading: "var(--font-newsreader)",
+    fontBody: "var(--font-dm-sans)",
+    fontData: "var(--font-dm-sans)",
+    surface1: "#fef8f0",
+    surface2: "#fdf2e6",
+    shadowGlow: "0 0 24px rgba(194, 110, 61, 0.15)",
+    bgGradient: "radial-gradient(ellipse at 30% 0%, rgba(194,110,61,0.08) 0%, transparent 50%, rgba(212,151,106,0.04) 80%, transparent 100%)",
+  },
+  aurora: {
+    bg: "#0b1021",
+    bgSubtle: "#101729",
+    card: "#151e33",
+    cardAlt: "#1a2540",
+    line: "#243050",
+    lineStrong: "#34446a",
+    fg: "#e2e8f3",
+    fgMuted: "#8b9dc0",
+    fgSubtle: "#5c7199",
+    primary: "#38bdf8",
+    primaryFg: "#061424",
+    accent: "#6d5cd8",
+    positive: "#34d399",
+    warn: "#f0b429",
+    danger: "#f87171",
+    radius: "14px",
+    radiusSm: "10px",
+    shadow: "0 18px 40px -24px rgba(0, 0, 0, 0.85)",
+    shadowSm: "0 4px 16px -10px rgba(0, 0, 0, 0.7)",
+    headingWeight: "600",
+    tracking: "-0.01em",
+    uppercase: "none",
+    gridLine: "#1a2440",
+    fontHeading: "var(--font-space-grotesk)",
+    fontBody: "var(--font-inter)",
+    fontData: "var(--font-space-grotesk)",
+    surface1: "#1a2845",
+    surface2: "#1e2e50",
+    shadowGlow: "0 0 30px rgba(56, 189, 248, 0.12), 0 0 60px rgba(109, 92, 216, 0.06)",
+    bgGradient: "radial-gradient(ellipse at 20% 0%, rgba(56,189,248,0.08) 0%, transparent 40%, rgba(109,92,216,0.05) 70%, transparent 100%)",
+  },
+  paper: {
+    bg: "#f6f1e9",
+    bgSubtle: "#ede6da",
+    card: "#faf6ef",
+    cardAlt: "#f0ebe1",
+    line: "#d6cebf",
+    lineStrong: "#b8af9e",
+    fg: "#2c261f",
+    fgMuted: "#6e6456",
+    fgSubtle: "#9d917f",
+    primary: "#2b3a67",
+    primaryFg: "#ffffff",
+    accent: "#8b3a4a",
+    positive: "#527852",
+    warn: "#b8860b",
+    danger: "#a04040",
+    radius: "10px",
+    radiusSm: "6px",
+    shadow: "0 4px 20px -10px rgba(80, 60, 40, 0.2)",
+    shadowSm: "0 2px 8px -6px rgba(80, 60, 40, 0.15)",
+    headingWeight: "600",
+    tracking: "-0.005em",
+    uppercase: "none",
+    gridLine: "#e5dfd3",
+    fontHeading: "var(--font-source-serif-4)",
+    fontBody: "var(--font-ibm-plex-sans)",
+    fontData: "var(--font-ibm-plex-mono)",
+    surface1: "#fcf8f1",
+    surface2: "#f8f2e8",
+    shadowGlow: "0 0 20px rgba(43, 58, 103, 0.08)",
+    bgGradient: "none",
   },
 };
 
@@ -208,6 +349,30 @@ export const THEME_LIST: ThemeMeta[] = [
     description:
       "Heavy borders, hard shadows and confident typography. Structure you can feel.",
     swatch: ["#fdfdfb", "#ff4d1c", "#1a1aff"],
+  },
+  {
+    id: "sunset",
+    name: "Sunset",
+    tagline: "Warm terracotta",
+    description:
+      "Warm cream backgrounds with terracotta and peach accents. Soft shadows and organic warmth.",
+    swatch: ["#faf5ee", "#c26e3d", "#d4976a"],
+  },
+  {
+    id: "aurora",
+    name: "Aurora",
+    tagline: "Deep night sky",
+    description:
+      "A deep navy interface with electric cyan and soft violet. Tuned for evening focus and low-light productivity.",
+    swatch: ["#0b1021", "#38bdf8", "#6d5cd8"],
+  },
+  {
+    id: "paper",
+    name: "Paper",
+    tagline: "Classic print",
+    description:
+      "Warm off-white with navy headings and burgundy accents. Inspired by stationery and printed planners.",
+    swatch: ["#f6f1e9", "#2b3a67", "#8b3a4a"],
   },
   {
     id: "custom",
@@ -267,6 +432,15 @@ export function buildCustomTokens(input: CustomThemeInput): ThemeTokens {
     tracking: "-0.015em",
     uppercase: "none",
     gridLine: dark ? "#1e242e" : "#eef0f3",
+    fontHeading: "var(--font-inter)",
+    fontBody: "var(--font-inter)",
+    fontData: "var(--font-inter)",
+    surface1: dark ? "#1a2030" : "#ffffff",
+    surface2: dark ? "#1e2535" : "#f0f2f5",
+    shadowGlow: dark
+      ? "0 0 30px rgba(91,141,239,0.1)"
+      : "0 0 24px rgba(37,99,235,0.12)",
+    bgGradient: "none",
   };
 }
 
@@ -310,6 +484,13 @@ export function cssVarMap(tokens: ThemeTokens): Record<string, string> {
     "--heading-weight": tokens.headingWeight,
     "--tracking": tokens.tracking,
     "--grid-line": tokens.gridLine,
+    "--font-heading": tokens.fontHeading,
+    "--font-body": tokens.fontBody,
+    "--font-data": tokens.fontData,
+    "--surface1": tokens.surface1,
+    "--surface2": tokens.surface2,
+    "--shadow-glow": tokens.shadowGlow,
+    "--bg-gradient": tokens.bgGradient,
   };
 }
 

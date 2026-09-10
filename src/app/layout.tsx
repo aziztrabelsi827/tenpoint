@@ -1,6 +1,21 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { Inter } from "next/font/google";
+import { DM_Sans } from "next/font/google";
+import { Space_Grotesk } from "next/font/google";
+import { Newsreader } from "next/font/google";
+import { Source_Serif_4 } from "next/font/google";
+import { IBM_Plex_Sans } from "next/font/google";
+import { IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
+const dmSans = DM_Sans({ subsets: ["latin"], variable: "--font-dm-sans", display: "swap" });
+const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-space-grotesk", display: "swap" });
+const newsreader = Newsreader({ subsets: ["latin"], variable: "--font-newsreader", display: "swap" });
+const sourceSerif4 = Source_Serif_4({ subsets: ["latin"], variable: "--font-source-serif-4", display: "swap" });
+const ibmPlexSans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-ibm-plex-sans", display: "swap" });
+const ibmPlexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-ibm-plex-mono", display: "swap" });
 
 export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://tenpoint.app";
 export const SITE_NAME = "TenPoint";
@@ -110,11 +125,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       "Habit heatmap and streak analytics",
       "Daily planner and habit calendar",
       "Pomodoro focus timer",
-      "Six customisable themes",
+      "Nine customisable themes",
     ],
   };
   return (
-    <html lang="en" data-theme="productivity" suppressHydrationWarning>
+    <html
+      lang="en"
+      data-theme="productivity"
+      suppressHydrationWarning
+      className={`${inter.variable} ${dmSans.variable} ${spaceGrotesk.variable} ${newsreader.variable} ${sourceSerif4.variable} ${ibmPlexSans.variable} ${ibmPlexMono.variable}`}
+    >
       <body>
         <script dangerouslySetInnerHTML={{ __html: themeBoot }} />
         {children}
