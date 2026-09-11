@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   calculateHabitPointsFromSnapshot,
   habitContribution,
+  habitContributionFor,
+  habitKindFor,
+  hasRecordedProgress,
   resolveHabitSnapshot,
   scoreDay,
   taskContribution,
+  type StoredHabitLog,
 } from "@/lib/scoring";
 import type { HabitDTO, HabitLogMap, TaskDTO, TaskProgressMap } from "@/lib/types";
 
@@ -107,6 +111,57 @@ describe("resolveHabitSnapshot", () => {
   it("captures the current configuration for a brand-new day", () => {
     const snap = resolveHabitSnapshot({ pointValue: 3, targetCount: 2, kind: "positive" }, null);
     expect(snap).toEqual({ weight: 3, target: 2, kind: "positive", isNewRecord: true });
+  });
+
+  it("treats a zero-progress row with a STALE snapshot as provisional (current config wins)", () => {
+    // The day's row was created at count 0 carrying the OLD 0.5 max; the habit
+    // has since been raised to 1.0. No real progress has been recorded yet, so
+    // the current configuration must become the snapshot on first completion.
+    const provisional: StoredHabitLog = {
+      count: 0,
+      points: 0,
+      pointValueAtRecord: 0.5,
+      targetCountAtRecord: 10,
+      kindAtRecord: "positive",
+    };
+    const snap = resolveHabitSnapshot(
+      { pointValue: 1, targetCount: 10, kind: "positive" },
+      provisional,
+    );
+    expect(snap).toEqual({ weight: 1, target: 10, kind: "positive", isNewRecord: true });
+  });
+
+  it("treats a zero-progress LEGACY row as provisional too", () => {
+    const provisional: StoredHabitLog = {
+      count: 0,
+      points: 0,
+      pointValueAtRecord: null,
+      targetCountAtRecord: null,
+      kindAtRecord: null,
+    };
+    const snap = resolveHabitSnapshot({ pointValue: 3, targetCount: 2, kind: "negative" }, provisional);
+    expect(snap).toEqual({ weight: 3, target: 2, kind: "negative", isNewRecord: true });
+  });
+
+  it("keeps the stored snapshot for a row with real recorded progress", () => {
+    const recorded: StoredHabitLog = {
+      count: 10,
+      points: 0.5,
+      pointValueAtRecord: 0.5,
+      targetCountAtRecord: 10,
+      kindAtRecord: "positive",
+    };
+    const snap = resolveHabitSnapshot(
+      { pointValue: 1, targetCount: 10, kind: "positive" },
+      recorded,
+    );
+    expect(snap).toEqual({ weight: 0.5, target: 10, kind: "positive", isNewRecord: false });
+  });
+
+  it("flags only real progress as recorded", () => {
+    expect(hasRecordedProgress({ count: 1 })).toBe(true);
+    expect(hasRecordedProgress({ count: 0 })).toBe(false);
+    expect(hasRecordedProgress(null)).toBe(false);
   });
 });
 
@@ -245,12 +300,98 @@ describe("scoreDay", () => {
     expect(r.habitRows[0].scheduled).toBe(false);
   });
 
-  it("treats a recorded zero as a record, not a missing day", () => {
+  it("treats a recorded zero as provisional, not a frozen historical record", () => {
+    // The day's row carries a stale 2-pt snapshot but NO real progress yet. The
+    // day resolves against the current configuration (still 0 at count 0), so
+    // nothing about the value is immutable history.
     const logs: HabitLogMap = {
       "1": { "2026-08-28": { count: 0, points: 0, pointValueAtRecord: 2, targetCountAtRecord: 5 } },
     };
     const r = scoreDay({ ...base, habits: [habit()], habitLogs: logs }, "2026-08-28", weekdayOf);
-    expect(r.habitRows[0].historical).toBe(true);
+    expect(r.habitRows[0].historical).toBe(false);
+    // Participation is preserved — the habit was toggled that day.
+    expect(r.habitRows[0].scheduled).toBe(true);
+    // The current configuration drives the day, not the stale snapshot.
+    expect(r.habitRows[0].pointValue).toBe(2);
+    expect(r.habitRows[0].target).toBe(5);
     expect(r.rating).toBe(0);
+  });
+
+  it("shows the CURRENT weight/target for a provisional zero-progress row", () => {
+    // The row carries a stale 0.5 max from before the user raised the habit to
+    // 1.0 (target 10) — but nothing real was recorded. Today must reflect the
+    // new configuration, so the "available" and target shown are not obsolete.
+    const logs: HabitLogMap = {
+      "1": { "2026-08-28": { count: 0, points: 0, pointValueAtRecord: 0.5, targetCountAtRecord: 10 } },
+    };
+    const nowOne = habit({ id: 1, pointValue: 1, targetCount: 10 });
+    const r = scoreDay({ ...base, habits: [nowOne], habitLogs: logs }, "2026-08-28", weekdayOf);
+    expect(r.habitRows[0].pointValue).toBe(1);
+    expect(r.habitRows[0].target).toBe(10);
+    expect(r.habitRows[0].contribution).toBe(0);
+    expect(r.habitRows[0].historical).toBe(false);
+    expect(r.habitAvailable).toBe(1);
+  });
+
+  it("repeated habit at 10 reps: resolving a provisional day after a config change yields the NEW max", () => {
+    // Day started with a stale 0.5 max snapshot (a zero-progress provisional
+    // row). The user raises the max to 1.0 and completes. The WRITE path
+    // resolves the provisional row against the CURRENT configuration, so the
+    // day pays: 0/10 -> 0, 5/10 -> 0.5, 10/10 -> 1.0.
+    const provisional: StoredHabitLog = {
+      count: 0,
+      points: 0,
+      pointValueAtRecord: 0.5,
+      targetCountAtRecord: 10,
+      kindAtRecord: "positive",
+    };
+    const snap = resolveHabitSnapshot({ pointValue: 1, targetCount: 10, kind: "positive" }, provisional);
+    expect(snap).toEqual({ weight: 1, target: 10, kind: "positive", isNewRecord: true });
+    expect(calculateHabitPointsFromSnapshot(0, snap)).toBe(0);
+    expect(calculateHabitPointsFromSnapshot(5, snap)).toBe(0.5);
+    expect(calculateHabitPointsFromSnapshot(10, snap)).toBe(1);
+  });
+
+  it("recorded days stay frozen; provisional day follows the new config", () => {
+    const today = "2026-08-28";
+    const yesterday = "2026-08-27";
+    const changed = habit({ id: 1, pointValue: 1, targetCount: 10 });
+    const logs: HabitLogMap = {
+      "1": {
+        // Yesterday was genuinely recorded at 5/10 while the max was 0.5: +0.25,
+        // immutably frozen even though the habit now pays 1.0.
+        [yesterday]: {
+          count: 5,
+          points: 0.25,
+          pointValueAtRecord: 0.5,
+          targetCountAtRecord: 10,
+          kindAtRecord: "positive",
+        },
+        // Today's row only has a stale 0.5 snapshot, but the user then completed
+        // 10/10 under the new 1.0 max: +1.0.
+        [today]: {
+          count: 10,
+          points: 1,
+          pointValueAtRecord: 1,
+          targetCountAtRecord: 10,
+          kindAtRecord: "positive",
+        },
+      },
+    };
+    const y = scoreDay({ ...base, today, habits: [changed], habitLogs: logs }, yesterday, weekdayOf);
+    expect(y.habits).toBe(0.25);
+    expect(y.habitRows[0].historical).toBe(true);
+
+    const t = scoreDay({ ...base, today, habits: [changed], habitLogs: logs }, today, weekdayOf);
+    expect(t.habits).toBe(1);
+  });
+
+  it("habitContributionFor/habitKindFor ignore a provisional row's stale data", () => {
+    const logs: HabitLogMap = {
+      "1": { "2026-08-28": { count: 0, points: 0, pointValueAtRecord: 0.5, targetCountAtRecord: 10 } },
+    };
+    const nowOne = habit({ id: 1, pointValue: 1, targetCount: 10, kind: "positive" });
+    expect(habitContributionFor(nowOne, logs, "2026-08-28", "2026-08-28")).toBe(0);
+    expect(habitKindFor(nowOne, logs, "2026-08-28", "2026-08-28")).toBe("positive");
   });
 });

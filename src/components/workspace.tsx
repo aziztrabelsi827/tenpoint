@@ -325,12 +325,8 @@ export function WorkspaceProvider({
        * the habit's current configuration while the request is in flight.
        */
       const habit = habits.find((h) => h.id === habitId);
-      const optimisticPoints = habit
-        ? calculateHabitPointsFromSnapshot(
-            next,
-            resolveHabitSnapshot(habit, beforeEntry ?? null),
-          )
-        : 0;
+      const resolved = habit ? resolveHabitSnapshot(habit, beforeEntry ?? null) : null;
+      const optimisticPoints = resolved ? calculateHabitPointsFromSnapshot(next, resolved) : 0;
       setLogs((prev) => ({
         ...prev,
         [String(habitId)]: {
@@ -338,10 +334,12 @@ export function WorkspaceProvider({
           [day]: {
             count: next,
             points: optimisticPoints,
-            // Carry the snapshot through so the UI keeps the historical config.
-            pointValueAtRecord: beforeEntry?.pointValueAtRecord,
-            targetCountAtRecord: beforeEntry?.targetCountAtRecord,
-            kindAtRecord: beforeEntry?.kindAtRecord,
+            // Carry the day's own snapshot: for a NEW or provisional (zero-
+            // progress) record the resolved snapshot is exactly what the server
+            // will store; for an already-recorded day keep what was stored.
+            pointValueAtRecord: resolved?.isNewRecord ? resolved.weight : beforeEntry?.pointValueAtRecord,
+            targetCountAtRecord: resolved?.isNewRecord ? resolved.target : beforeEntry?.targetCountAtRecord,
+            kindAtRecord: resolved?.isNewRecord ? resolved.kind : beforeEntry?.kindAtRecord,
           },
         },
       }));

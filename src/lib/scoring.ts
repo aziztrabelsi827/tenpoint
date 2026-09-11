@@ -12,14 +12,18 @@
  * Historical accuracy
  * -------------------
  * Configuration changes (habit weight, repetitions, type, task target, task
- * reward) apply FORWARD only. Past days keep the contribution snapshot that was
- * stored when they were recorded:
+ * reward) apply FORWARD only. A day keeps the contribution snapshot that was
+ * stored when it was recorded:
  *
- *   - days strictly before `today`  -> read the stored snapshot
- *   - `today` and later             -> compute live from current configuration
+ *   - a day holding REAL recorded progress (habit count > 0) -> stored snapshot
+ *   - a day with no recorded progress, or a provisional zero-progress row
+ *     (e.g. an occurrence that was checked and unchecked again) -> computed
+ *     live from the current configuration until real progress is recorded
  *
- * A day with no snapshot (legacy data) falls back to live computation so the
- * migration is graceful.
+ * A provisional zero-progress row therefore never freezes the configuration:
+ * the configuration in effect the moment the first REAL completion lands is
+ * what becomes that day's snapshot. Rows with no snapshot (legacy data) fall
+ * back to live computation so the migration is graceful.
  */
 
 import { roundPoints } from "@/lib/format";
@@ -75,6 +79,18 @@ export function isDone(logs: HabitLogMap, habitId: number, day: string): boolean
   return countFor(logs, habitId, day) > 0;
 }
 
+/**
+ * True when a habit log holds REAL completed progress.
+ *
+ * A zero-progress row is PROVISIONAL (e.g. an occurrence checked then
+ * unchecked), so it never counts as an immutable historical record: the day
+ * keeps resolving against the current configuration. This is the single
+ * boundary the whole snapshot model uses — read paths and write paths alike.
+ */
+export function hasRecordedProgress(entry: { count: number } | null | undefined): boolean {
+  return !!entry && entry.count > 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Live habit maths — uses CURRENT configuration                      */
 /* ------------------------------------------------------------------ */
@@ -102,10 +118,12 @@ export function perOccurrenceValue(habit: HabitDTO): number {
 /* habit-log can never be recalculated from configuration that did not   */
 /* apply to the day being written.                                     */
 /*                                                                     */
-/* Priority for a given habit + day:                                   */
-/*   1. the day's stored snapshot (authoritative)                       */
-/*   2. a legacy row's stored points   (preserved verbatim)             */
-/*   3. the habit's current config     (only for a brand-new record)    */
+/* A stored snapshot is authoritative ONLY for a day holding REAL      */
+/* recorded progress (count > 0). A zero-progress row is provisional    */
+/* and never freezes the configuration. Priority for a given day:      */
+/*   1. a recorded day's stored snapshot (authoritative)                */
+/*   2. a recorded legacy row's stored points   (preserved verbatim)    */
+/*   3. the habit's current config             (day not yet recorded)    */
 /* ------------------------------------------------------------------ */
 
 /** The minimal stored-log shape the resolver needs. */
@@ -135,28 +153,32 @@ export function resolveHabitSnapshot(
   habit: Pick<HabitDTO, "pointValue" | "targetCount" | "kind">,
   existingLog: StoredHabitLog | null | undefined,
 ): HabitDaySnapshot {
-  // 1. A stored snapshot is authoritative for that day.
-  if (existingLog && existingLog.pointValueAtRecord != null) {
+  const recorded = hasRecordedProgress(existingLog);
+
+  // 1. A stored snapshot is authoritative for a RECORDED day.
+  if (recorded && existingLog!.pointValueAtRecord != null) {
     return {
-      weight: Number(existingLog.pointValueAtRecord),
-      target: Math.max(1, Number(existingLog.targetCountAtRecord ?? habit.targetCount)),
-      kind: existingLog.kindAtRecord === "negative" ? "negative" : "positive",
+      weight: Number(existingLog!.pointValueAtRecord),
+      target: Math.max(1, Number(existingLog!.targetCountAtRecord ?? habit.targetCount)),
+      kind: existingLog!.kindAtRecord === "negative" ? "negative" : "positive",
       isNewRecord: false,
     };
   }
 
-  // 2. Legacy row with no snapshot: preserve the recorded points verbatim.
-  if (existingLog) {
+  // 2. Recorded legacy row with no snapshot: preserve the points verbatim.
+  if (recorded) {
     return {
       weight: Number(habit.pointValue),
       target: Math.max(1, Number(habit.targetCount)),
       kind: habit.kind === "negative" ? "negative" : "positive",
       isNewRecord: false,
-      legacyPreservePoints: Number(existingLog.points),
+      legacyPreservePoints: Number(existingLog!.points),
     };
   }
 
-  // 3. No record yet: the current configuration becomes the day's snapshot.
+  // 3. No real record yet (brand-new day OR a provisional zero-progress row):
+  //    the current configuration becomes the day's snapshot the moment real
+  //    progress is recorded.
   return {
     weight: Number(habit.pointValue),
     target: Math.max(1, Number(habit.targetCount)),
@@ -188,16 +210,18 @@ export function calculateHabitPointsFromSnapshot(
 /* Day-aware resolution                                               */
 /*                                                                     */
 /* These are the ONLY functions the UI may call to read a contribution  */
-/* for a specific day. Historical days return the stored snapshot;      */
-/* today and the future compute live from current configuration.        */
+/* for a specific day. Days holding real recorded progress return the   */
+/* stored snapshot; days without it (including provisional zero-progress */
+/* rows) resolve against the current configuration.                     */
 /* ------------------------------------------------------------------ */
 
 /**
  * The habit's effective type on a given day.
  *
- * Historical days are classified by the SIGN of the stored snapshot, so
+ * Recorded days are classified by the SIGN of the stored snapshot, so
  * flipping a habit from positive to negative (or back) never rewrites what a
- * past day actually earned. Today uses the live configuration.
+ * recorded day actually earned. Days with no recorded progress use the live
+ * configuration — a provisional zero-progress row never freezes the type.
  */
 export function habitKindFor(
   habit: HabitDTO,
@@ -207,13 +231,13 @@ export function habitKindFor(
 ): HabitDTO["kind"] {
   void _today;
   const entry = habitLogEntry(habitLogs, habit.id, day);
-  if (entry) {
+  if (hasRecordedProgress(entry)) {
     // Prefer the explicitly recorded kind; fall back to the sign of the points
     // for legacy rows that predate the kind snapshot.
-    if (entry.kindAtRecord === "positive" || entry.kindAtRecord === "negative") {
-      return entry.kindAtRecord;
+    if (entry!.kindAtRecord === "positive" || entry!.kindAtRecord === "negative") {
+      return entry!.kindAtRecord;
     }
-    return entry.points < 0 ? "negative" : "positive";
+    return entry!.points < 0 ? "negative" : "positive";
   }
   return habit.kind;
 }
@@ -221,9 +245,11 @@ export function habitKindFor(
 /**
  * A habit's contribution to a specific day.
  *
- * Historical days with a stored log return the snapshot unchanged, so editing
- * a habit's weight, repetitions or type never alters a past day. Today and
- * future days compute live from current configuration.
+ * Recorded days with real progress return the snapshot unchanged, so editing
+ * a habit's weight, repetitions or type never alters a recorded day. Days
+ * without real progress (including provisional zero-progress rows) compute
+ * live from current configuration — an entry left at zero never locks in an
+ * obsolete reward.
  */
 export function habitContributionFor(
   habit: HabitDTO,
@@ -233,11 +259,12 @@ export function habitContributionFor(
 ): number {
   void _today;
   /**
-   * A recorded log is authoritative for ANY date — past, today or future.
-   * Unrecorded activity is calculated from the current configuration.
+   * A record holding real completed progress is authoritative for ANY date.
+   * Unrecorded activity — and provisional zero-progress entries — are
+   * calculated from the current configuration.
    */
   const entry = habitLogEntry(habitLogs, habit.id, day);
-  if (entry) return entry.points;
+  if (hasRecordedProgress(entry)) return entry!.points;
   return habitContribution(habit, 0);
 }
 
@@ -427,29 +454,30 @@ export function scoreDay(
     const entry = habitLogEntry(ctx.habitLogs, habit.id, day);
 
     /**
-     * A RECORDED LOG MEANS THE HABIT PARTICIPATED IN THAT DAY.
+     * REAL RECORDED PROGRESS MEANS THE HABIT PARTICIPATED IN THAT DAY.
      *
      * The stored record is checked BEFORE the habit's current `enabled` state,
      * `days` schedule, `targetCount`, `pointValue` or `kind`. This is what keeps
-     * history immutable: disabling the habit, changing its active weekdays,
-     * altering its schedule, flipping its type or editing its weight later must
-     * never make an already-recorded contribution disappear.
+     * recorded history immutable: disabling the habit, changing its active
+     * weekdays, altering its schedule, flipping its type or editing its weight
+     * later must never make an already-recorded contribution disappear.
      *
-     * Only when NO record exists does the current configuration decide whether
-     * the habit is scheduled for that day.
+     * A zero-progress row (an occurrence checked then unchecked) is PROVISIONAL:
+     * it marks participation but freezes nothing — the day keeps resolving
+     * against the current configuration until real progress is recorded.
      */
-    const recorded = !!entry;
-    const scheduled = recorded || (habit.enabled && isScheduled(habit, day, weekdayOf));
+    const recorded = hasRecordedProgress(entry);
+    const scheduled = !!entry || (habit.enabled && isScheduled(habit, day, weekdayOf));
 
     const count = entry?.count ?? 0;
-    const contribution = entry ? entry.points : scheduled ? habitContribution(habit, count) : 0;
+    const contribution = recorded ? entry!.points : scheduled ? habitContribution(habit, count) : 0;
 
     // The recorded kind wins over the habit's current kind.
     const effectiveKind = habitKindFor(habit, ctx.habitLogs, day, ctx.today);
 
     // The recorded target/weight win over the current configuration.
-    const snapshotWeight = entry?.pointValueAtRecord ?? habit.pointValue;
-    const snapshotTarget = entry?.targetCountAtRecord ?? habit.targetCount;
+    const snapshotWeight = recorded ? (entry!.pointValueAtRecord ?? habit.pointValue) : habit.pointValue;
+    const snapshotTarget = recorded ? (entry!.targetCountAtRecord ?? habit.targetCount) : habit.targetCount;
 
     if (scheduled) {
       if (effectiveKind === "negative") {
