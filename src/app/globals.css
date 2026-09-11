@@ -1176,6 +1176,10 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    text-decoration: none;
+  }
+  .tp-dash-improve-name:hover {
+    text-decoration: underline;
   }
   .tp-dash-improve-type {
     font-family: var(--font-data);
@@ -1184,6 +1188,12 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--fg-subtle);
+  }
+  .tp-dash-improve-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
   }
   .tp-dash-improve-pts {
     font-size: 0.8rem;
@@ -1268,6 +1278,12 @@
     font-weight: 700;
     margin: 0;
     line-height: 1.3;
+    display: block;
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .tp-dash-next-name:hover {
+    text-decoration: underline;
   }
   .tp-dash-next-kind {
     font-family: var(--font-data);
@@ -1593,23 +1609,47 @@
   /* --- Mobile --- */
   @media (max-width: 600px) {
     .tp-dashboard {
-      padding: 0.5rem 0.5rem 1.5rem;
+      padding: 0.5rem 0.75rem 2.25rem;
     }
     .tp-dash-header {
-      padding-top: 1rem;
+      padding-top: 0.9rem;
     }
     .tp-dash-greeting {
-      font-size: 1.4rem;
+      font-size: 1.35rem;
+    }
+    .tp-dash-context {
+      font-size: 0.8rem;
+    }
+    .tp-dash-score {
+      padding: 1rem;
+      margin: 0.35rem 0;
+    }
+    .tp-score-kicker {
+      margin-bottom: 0.45rem;
     }
     .tp-score-number {
-      font-size: 3.4rem;
+      font-size: 3.1rem;
     }
     .tp-score-head {
       grid-template-columns: 1fr;
-      gap: 0.6rem;
+      gap: 0.45rem;
     }
     .tp-score-side {
       text-align: left;
+    }
+    .tp-score-label {
+      font-size: 1.02rem;
+    }
+    .tp-score-message {
+      font-size: 0.8rem;
+    }
+    .tp-score-breakdown {
+      gap: 0.6rem 1rem;
+      margin-top: 0.6rem;
+      padding-top: 0.6rem;
+    }
+    .tp-score-bd {
+      font-size: 0.74rem;
     }
     .tp-score-available {
       margin-left: 0;
@@ -1621,8 +1661,45 @@
     .tp-dash-next {
       order: 2;
     }
+    .tp-dash-improve-item {
+      flex-wrap: wrap;
+      gap: 0.4rem 0.5rem;
+    }
+    .tp-dash-improve-actions {
+      width: 100%;
+      justify-content: space-between;
+    }
+    .tp-dash-improve-actions .btn {
+      flex: 1;
+      min-height: 2.75rem;
+    }
+    .tp-dash-next .btn {
+      min-height: 2.75rem;
+      align-self: stretch;
+    }
     .tp-dash-activity {
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr);
+      row-gap: 0.4rem;
+    }
+    .tp-dash-activity-controls {
+      grid-column: 1 / -1;
+      justify-content: flex-start;
+      flex-wrap: wrap;
+    }
+    .tp-dash-activity-stepper-info {
+      min-width: 0;
+      flex: 1;
+    }
+    .tp-dash-activity .stepper {
+      height: 2.5rem;
+    }
+    .tp-dash-activity .stepper button {
+      width: 2.4rem;
+      height: 2.5rem;
+      font-size: 1.05rem;
+    }
+    .tp-dash-activity .stepper > span {
+      padding: 0 0.55rem;
     }
     .tp-dash-activity-right {
       grid-column: 1 / -1;

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OccurrenceDots, ScheduledOccurrenceDots } from "@/components/habit-grid";
 import { ProgressBar } from "@/components/ui";
 import { useWorkspace } from "@/components/workspace";
@@ -65,6 +65,7 @@ type ActivityRow = {
 };
 
 type RemainingItem = {
+  key: string;
   label: string;
   points: number;
   href: string;
@@ -73,6 +74,11 @@ type RemainingItem = {
   kindLabel: string;
   actionLabel: string;
   progressNote?: string;
+  /** Source row identity, so the inline action can mutate without navigating. */
+  id: number;
+  target: number;
+  count: number;
+  control: ActivityRow["control"];
 };
 
 /* ================================================================== */
@@ -81,7 +87,7 @@ type RemainingItem = {
 
 export function DashboardView({ userName, greeting }: { userName: string; greeting: string }) {
   const {
-    habits, logs, tasks, events, focus, taskProgress, occurrences,
+    habits, logs, tasks, events, focus, taskProgress, occurrences, busy,
     setHabitCount, setTaskProgress, today, timezone,
   } = useWorkspace();
   void occurrences;
@@ -162,18 +168,27 @@ export function DashboardView({ userName, greeting }: { userName: string; greeti
       if (r.kind === "negative") {
         if (r.count > 0)
           items.push({
-            label: r.name, points: r.earned, href: r.href, icon: r.icon, kind: r.kind,
+            key: r.key, label: r.name, points: r.earned, href: r.href, icon: r.icon, kind: r.kind,
             kindLabel: "Penalty", actionLabel: "—",
+            id: r.id, target: r.targetCount, count: r.count, control: r.control,
           });
         continue;
       }
       const left = Math.round((r.maximum - r.earned) * 100) / 100;
       if (left > 0.005)
         items.push({
-          label: r.name, points: left, href: r.href, icon: r.icon, kind: r.kind,
+          key: r.key, label: r.name, points: left, href: r.href, icon: r.icon, kind: r.kind,
           kindLabel: r.kind === "task" ? "Task" : "Habit",
-          actionLabel: r.kind === "task" ? (r.count > 0 ? "Continue" : "Start") : "Complete",
+          actionLabel:
+            r.kind === "task"
+              ? r.control === "counter"
+                ? "Complete"
+                : r.count > 0
+                  ? "Continue"
+                  : "Start"
+              : "Complete",
           progressNote: r.kind === "task" && r.count > 0 ? r.progressLabel : undefined,
+          id: r.id, target: r.targetCount, count: r.count, control: r.control,
         });
     }
     return items.sort((a, b) => b.points - a.points);
@@ -215,6 +230,41 @@ export function DashboardView({ userName, greeting }: { userName: string; greeti
     return () => clearInterval(id);
   }, [timezone]);
   const nextUp = nowMinutes === null ? null : (schedule.find((s) => s.time >= nowMinutes) ?? null);
+
+  /* ---- inline action (Complete/Start) ---- */
+  /** Guards against double-taps before React has flushed the `pending` state. */
+  const pendingRef = useRef<Set<string>>(new Set());
+  const [pending, setPending] = useState<Record<string, boolean>>({});
+
+  const runItemAction = useCallback(
+    async (item: RemainingItem) => {
+      if (pendingRef.current.has(item.key)) return;
+      pendingRef.current.add(item.key);
+      setPending((p) => ({ ...p, [item.key]: true }));
+      try {
+        if (item.kind === "habit") {
+          await setHabitCount(item.id, today, item.target);
+        } else if (item.control === "counter") {
+          await setTaskProgress(item.id, today, item.target);
+        } else {
+          const step = item.icon === "⏱" ? 15 : item.target >= 50 ? 5 : 1;
+          await setTaskProgress(item.id, today, item.count + step);
+        }
+      } finally {
+        pendingRef.current.delete(item.key);
+        setPending((p) => {
+          const copy = { ...p };
+          delete copy[item.key];
+          return copy;
+        });
+      }
+    },
+    [setHabitCount, setTaskProgress, today],
+  );
+
+  const actionPending = (item: RemainingItem) =>
+    Boolean(pending[item.key]) ||
+    (item.kind === "habit" && Boolean(busy[`log-${item.id}-${today}`]));
 
   /* ---- header parts ---- */
   const dateParts = formatLong(today).split(", ");
@@ -322,19 +372,33 @@ export function DashboardView({ userName, greeting }: { userName: string; greeti
           ) : (
             <>
               <div className="tp-dash-improve-list">
-                {positiveRemaining.slice(0, 5).map((item) => (
-                  <div key={item.label} className="tp-dash-improve-item">
-                    <span className="tp-dash-improve-icon" aria-hidden>{item.icon}</span>
-                    <div className="tp-dash-improve-info">
-                      <span className="tp-dash-improve-name">{item.label}</span>
-                      <span className="tp-dash-improve-type">{item.kindLabel}</span>
+                {positiveRemaining.slice(0, 5).map((item) => {
+                  const pendingAction = actionPending(item);
+                  return (
+                    <div key={item.label} className="tp-dash-improve-item">
+                      <span className="tp-dash-improve-icon" aria-hidden>{item.icon}</span>
+                      <div className="tp-dash-improve-info">
+                        <Link href={item.href} className="tp-dash-improve-name">{item.label}</Link>
+                        <span className="tp-dash-improve-type">{item.kindLabel}</span>
+                      </div>
+                      <div className="tp-dash-improve-actions">
+                        <span className="tp-dash-improve-pts num">+{formatPoints(item.points)}</span>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void runItemAction(item);
+                          }}
+                          disabled={pendingAction}
+                          aria-busy={pendingAction}
+                        >
+                          {pendingAction ? "…" : item.actionLabel}
+                        </button>
+                      </div>
                     </div>
-                    <span className="tp-dash-improve-pts num">+{formatPoints(item.points)}</span>
-                    <Link href={item.href} className="btn btn-sm btn-primary">
-                      {item.actionLabel}
-                    </Link>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               {positiveRemaining.length > 5 && (
                 <p className="tp-dash-more">+{positiveRemaining.length - 5} more</p>
@@ -349,16 +413,25 @@ export function DashboardView({ userName, greeting }: { userName: string; greeti
             <div className="tp-dash-next-card">
               <div className="tp-dash-next-icon" aria-hidden>{nextAction.icon}</div>
               <div className="tp-dash-next-info">
-                <p className="tp-dash-next-name">{nextAction.label}</p>
+                <Link href={nextAction.href} className="tp-dash-next-name">{nextAction.label}</Link>
                 <p className="tp-dash-next-kind">{nextAction.kindLabel}</p>
                 <p className="tp-dash-next-pts num">+{formatPoints(nextAction.points)} possible score</p>
                 {nextAction.progressNote && (
                   <p className="tp-dash-next-progress">{nextAction.progressNote}</p>
                 )}
               </div>
-              <Link href={nextAction.href} className="btn btn-primary">
-                {nextAction.actionLabel}
-              </Link>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void runItemAction(nextAction);
+                }}
+                disabled={actionPending(nextAction)}
+                aria-busy={actionPending(nextAction)}
+              >
+                {actionPending(nextAction) ? "…" : nextAction.actionLabel}
+              </button>
             </div>
           </section>
         )}
