@@ -2165,3 +2165,11 @@
 .ring-progress {
   transition: stroke-dashoffset 0.7s cubic-bezier(0.22, 1, 0.36, 1);
 }
+
+/* ---------------------------------------------------------------- */
+/* Mobile: tighten theme-specific sizes that exceed the 600px base  */
+/* ---------------------------------------------------------------- */
+@media (max-width: 600px) {
+  [data-theme="brutalist"] .tp-score-number { font-size: 3.4rem; }
+  [data-theme="paper"] .tp-dash-greeting { font-size: 1.35rem; }
+}

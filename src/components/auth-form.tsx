@@ -19,11 +19,6 @@ function AuthFormInner({ mode }: { mode: Mode }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
-  const [needsConfirmation, setNeedsConfirmation] = useState(false);
-  const [confirmEmail, setConfirmEmail] = useState("");
-  const [resending, setResending] = useState(false);
-  const [resendStatus, setResendStatus] = useState<"" | "sent" | "rate-limited" | "failed">("");
-  const [resendCooldownUntil, setResendCooldownUntil] = useState(0);
 
   const endpoint =
     mode === "forgot-password"
@@ -50,36 +45,6 @@ function AuthFormInner({ mode }: { mode: Mode }) {
     return null;
   }
 
-  async function resendConfirmation() {
-    if (!confirmEmail) return;
-    if (Date.now() < resendCooldownUntil) {
-      setResendStatus("rate-limited");
-      return;
-    }
-    setResending(true);
-    setResendStatus("");
-    try {
-      const res = await fetch("/api/auth/resend", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: confirmEmail }),
-      });
-      if (res.status === 429) {
-        setResendStatus("rate-limited");
-      } else {
-        setResendStatus(res.ok ? "sent" : "failed");
-        if (res.ok) {
-          // Server allows a few requests/minute; enforce a client cooldown so
-          // we never hammer the endpoint or exhaust the mailer quota.
-          setResendCooldownUntil(Date.now() + 20_000);
-        }
-      }
-    } catch {
-      setResendStatus("failed");
-    }
-    setResending(false);
-  }
-
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -104,7 +69,7 @@ function AuthFormInner({ mode }: { mode: Mode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: string; ok?: boolean; needsConfirmation?: boolean; alreadyExists?: boolean };
+      const data = (await res.json().catch(() => ({}))) as { error?: string; ok?: boolean; alreadyExists?: boolean };
       if (!res.ok) {
         setError(data.error ?? "Something went wrong. Please try again.");
         setLoading(false);
@@ -118,13 +83,11 @@ function AuthFormInner({ mode }: { mode: Mode }) {
       }
 
       if (mode === "signup") {
-        if (data.needsConfirmation) {
-          setNotice("Check your email to confirm your account. You can log in once it’s confirmed.");
-          setConfirmEmail(email.trim().toLowerCase());
-          setNeedsConfirmation(true);
-        } else if (data.alreadyExists) {
+        if (data.alreadyExists) {
           setNotice("An account with that email may already exist. Try logging in, or reset your password.");
         } else {
+          // Email confirmation is disabled — the signup route returns a session
+          // immediately, so the user lands straight on the dashboard.
           router.push("/dashboard");
           router.refresh();
         }
@@ -276,31 +239,11 @@ function AuthFormInner({ mode }: { mode: Mode }) {
           <p role="status" className="text-sm font-semibold" style={{ color: "var(--positive)" }}>{notice}</p>
         ) : null}
 
-        {mode === "signup" && needsConfirmation ? (
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              className="btn btn-ghost w-full"
-              disabled={resending}
-              onClick={resendConfirmation}
-            >
-              {resending ? "Sending…" : "Resend confirmation email"}
-            </button>
-            {resendStatus === "sent" ? (
-              <p role="status" className="text-center text-xs font-semibold" style={{ color: "var(--positive)" }}>
-                Confirmation email sent. Check your inbox (and spam) for the link.
-              </p>
-            ) : resendStatus === "rate-limited" ? (
-              <p role="alert" className="text-center text-xs font-semibold" style={{ color: "var(--danger)" }}>
-                Please wait a little before requesting another email.
-              </p>
-            ) : resendStatus === "failed" ? (
-              <p role="alert" className="text-center text-xs font-semibold" style={{ color: "var(--danger)" }}>
-                Could not resend right now. Please try again shortly.
-              </p>
-            ) : null}
-          </div>
-        ) : null}
+        {mode === "signup" && (
+          <p role="status" className="text-sm font-semibold" style={{ color: "var(--fg-muted)" }}>
+            No email needed — your account is ready the moment you create it.
+          </p>
+        )}
 
         <button type="submit" className="btn btn-primary w-full" disabled={loading}>
           {loading

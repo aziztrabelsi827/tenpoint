@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Mock the Supabase server client so these handler-level tests never touch a
 // real project or send real email. The mocks are hoisted to keep vitest's
 // module-mock hoisting happy.
-const { resendMock, exchangeMock, signInMock } = vi.hoisted(() => ({
-  resendMock: vi.fn(),
+const { signUpMock, exchangeMock, signInMock } = vi.hoisted(() => ({
+  signUpMock: vi.fn(),
   exchangeMock: vi.fn(),
   signInMock: vi.fn(),
 }));
@@ -12,14 +12,14 @@ const { resendMock, exchangeMock, signInMock } = vi.hoisted(() => ({
 vi.mock("@/lib/supabase/server", () => ({
   getSupabaseServerClient: vi.fn(() => ({
     auth: {
-      resend: resendMock,
+      signUp: signUpMock,
       exchangeCodeForSession: exchangeMock,
       signInWithPassword: signInMock,
     },
   })),
 }));
 
-import { POST as resendPost } from "@/app/api/auth/resend/route";
+import { POST as signupPost } from "@/app/api/auth/signup/route";
 import { POST as loginPost } from "@/app/api/auth/login/route";
 import { GET as callbackGet } from "@/app/auth/callback/route";
 
@@ -33,69 +33,74 @@ function req(url: string, ip = "10.0.0.1"): Request {
   });
 }
 
-describe("resend confirmation route", () => {
+describe("signup route with email confirmation disabled", () => {
   beforeEach(() => {
-    resendMock.mockReset();
-    resendMock.mockResolvedValue({ error: null });
+    signUpMock.mockReset();
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it("returns 400 for an invalid email without calling Supabase", async () => {
-    const r = new Request("http://localhost:3000/api/auth/resend", {
+  function signupRequest(overrides: Record<string, unknown> = {}, ip = "10.0.0.1"): Request {
+    return new Request("http://localhost:3000/api/auth/signup", {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "not-an-email" }),
+      headers: { "content-type": "application/json", "x-forwarded-for": ip },
+      body: JSON.stringify({
+        name: "Alex Morgan",
+        email: "Alex@Example.com",
+        password: "correct-horse-battery",
+        confirmPassword: "correct-horse-battery",
+        ...overrides,
+      }),
     });
-    const res = await resendPost(r);
-    expect(res.status).toBe(400);
-    expect(resendMock).not.toHaveBeenCalled();
-  });
+  }
 
-  it("delegates to supabase.auth.resend with type signup and a redirect URL", async () => {
-    const r = new Request("http://localhost:3000/api/auth/resend", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "Art@Example.com " }),
-    });
-    const res = await resendPost(r);
+  it("returns ok with a session (no confirmation-waiting screen)", async () => {
+    signUpMock.mockResolvedValue({ data: { session: {}, user: { id: "u1" } }, error: null });
+    const res = await signupPost(signupRequest());
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toEqual({ ok: true });
-    expect(resendMock).toHaveBeenCalledWith({
-      type: "signup",
-      email: "art@example.com",
-      options: { emailRedirectTo: "http://localhost:3000/auth/callback" },
-    });
+    // The name must still travel in the signup payload for trigger-based
+    // profile/display-name creation.
+    expect(signUpMock).toHaveBeenCalledWith(
+      expect.objectContaining({ options: { data: { name: "Alex Morgan" } } }),
+    );
   });
 
-  it("returns a generic ok even when the provider errors (no enumeration)", async () => {
-    resendMock.mockResolvedValue({ error: new Error("over_email_send_rate_limit") });
-    const r = new Request("http://localhost:3000/api/auth/resend", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: "nobody@example.org" }),
-    });
-    const res = await resendPost(r);
+  it("maps an existing-account error to a neutral alreadyExists response", async () => {
+    signUpMock.mockResolvedValue({ data: null, error: new Error("User already registered") });
+    const res = await signupPost(signupRequest());
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, alreadyExists: true });
   });
 
-  it("rate-limits repeated resend requests per IP", async () => {
-    const ipOne = "99.99.99.1";
-    const body = JSON.stringify({ email: "rate@example.com" });
+  it("returns a generic error when signUp fails without leaking the provider message", async () => {
+    signUpMock.mockResolvedValue({ data: null, error: new Error("password_too_short") });
+    const res = await signupPost(signupRequest());
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain("Could not create your account");
+    expect(JSON.stringify(body)).not.toContain("password_too_short");
+  });
+
+  it("returns a generic error when no session is returned (unexpected with confirmation off)", async () => {
+    signUpMock.mockResolvedValue({ data: { session: null, user: { id: "u1" } }, error: null });
+    const res = await signupPost(signupRequest());
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "Could not create your account." });
+  });
+
+  it("rejects invalid input before calling Supabase", async () => {
+    const res = await signupPost(signupRequest({ name: "A" }));
+    expect(res.status).toBe(400);
+    expect(signUpMock).not.toHaveBeenCalled();
+  });
+
+  it("rate-limits repeated signups per IP", async () => {
+    signUpMock.mockResolvedValue({ data: { session: {} }, error: null });
     let lastStatus = 0;
-    for (let i = 0; i < 4; i += 1) {
-      const r = new Request("http://localhost:3000/api/auth/resend", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-forwarded-for": ipOne },
-        body,
-      });
-      lastStatus = (await resendPost(r)).status;
+    for (let i = 0; i < 11; i += 1) {
+      lastStatus = (await signupPost(signupRequest({ email: `user${i}@example.com` }, "77.77.77.7"))).status;
     }
-    // Allowed = 3; the 4th must be rejected with 429.
+    // Allowed = 10; the 11th must be rejected with 429.
     expect(lastStatus).toBe(429);
   });
 });

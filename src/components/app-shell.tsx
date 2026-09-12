@@ -275,7 +275,7 @@ export function AppShell({
               key={item.href}
               href={item.href}
               aria-current={active ? "page" : undefined}
-              className="flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-semibold"
+              className="flex min-h-[52px] flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold"
               style={{ color: active ? "var(--primary)" : "var(--fg-subtle)" }}
             >
               <span aria-hidden className="text-lg leading-none">
@@ -288,7 +288,7 @@ export function AppShell({
         <button
           type="button"
           onClick={() => setMobileMore(true)}
-          className="flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-semibold"
+          className="flex min-h-[52px] flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold"
           style={{ color: "var(--fg-subtle)" }}
         >
           <span aria-hidden className="text-lg leading-none">

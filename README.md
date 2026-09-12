@@ -128,15 +128,17 @@ interface — callers need no changes.
 TenPoint keeps **Supabase Auth** in charge of authentication and **Resend** in
 charge of delivery. The application never generates confirmation tokens or sends
 email itself — it only calls `supabase.auth.signUp()`,
-`supabase.auth.resend()` and `supabase.auth.resetPasswordForEmail()`. The SMTP
-credentials live in the **Supabase project settings**, never in the browser and
-never in a `NEXT_PUBLIC_*` variable.
+`supabase.auth.resetPasswordForEmail()`, and `supabase.auth.updateUser()` (for
+email changes). Email **confirmation is disabled** in the project settings, so
+signup returns an authenticated session immediately and the user never sees a
+"check your email" screen. The SMTP credentials live in the **Supabase project
+settings**, never in the browser and never in a `NEXT_PUBLIC_*` variable.
 
 Architecture:
 
 ```
 TENPOINT (Next.js) -> SUPABASE AUTH -> RESEND SMTP -> USER INBOX
-        signup/confirm/reset/login     branded sender
+        signup (instant session) / reset / login     branded sender
 ```
 
 **1. Create & verify a Resend account and domain**
@@ -218,19 +220,17 @@ TENPOINT (Next.js) -> SUPABASE AUTH -> RESEND SMTP -> USER INBOX
   - Add `http://localhost:3000/auth/callback` and
     `https://your-domain.com/auth/callback` explicitly (or `/**` to allow all
     paths on those hosts).
-- Keep email confirmation **enabled**. The intended production flow is:
-  signup → confirmation email → user clicks link → `/auth/callback` →
-  session → dashboard. Do not disable confirmation to "simplify" testing.
+- Keep email confirmation **disabled** (Supabase → Authentication → Sign In /
+  Up → “Confirm email”). The intended flow is: signup → authenticated session
+  returned immediately → redirect to `/dashboard`. No email is required.
 
 **6. Test**
-- Sign up with a real inbox → expect a branded TenPoint confirmation email with a
-  working link. Confirm → `/auth/callback` → authenticated session → dashboard.
-- On the signup confirmation screen, use **Resend confirmation email** (calls
-  `supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo } })`).
+- Sign up with a brand-new email → you land straight on `/dashboard` with an
+  authenticated session. No confirmation email, no waiting screen.
 - Request a password reset → branded reset email → you can set a new password.
-- Check Supabase Auth logs (Authentication → Logs) that confirmation / reset /
-  resend were handed off to the configured SMTP provider, and check the Resend
-  dashboard for **Sent / Delivered** with no bounce/complaint.
+- Check Supabase Auth logs (Authentication → Logs) that password reset /
+  email-change were handed off to the configured SMTP provider, and check the
+  Resend dashboard for **Sent / Delivered** with no bounce/complaint.
 - The final check: the inbox **From** must show **TenPoint** (from your verified
   address), not `Supabase Auth`. If it still shows "Supabase Auth", custom SMTP
   is not fully applied.
@@ -253,8 +253,8 @@ Pure-function tests cover:
   contaminate past ratings; over-configuration is surfaced but never rescaled.
 - `rate-limit` — fixed-window allowance, rejection beyond limit, window reset,
   per-key isolation, and IP extraction.
-- `auth` — signup response shape, `needsConfirmation` mapping, resend behavior
-  (happy path + rate limit), reset-password redirect, callback safe-`next`
+- `auth` — signup response shape (session → instant `ok`, no confirmation
+  mapping), signup error mapping, reset-password redirect, callback safe-`next`
   validation, and generic (non-enumerating) auth error mapping. These are
   handler-level tests that mock the Supabase server client; they do **not** send
   real email.

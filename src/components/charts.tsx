@@ -192,12 +192,15 @@ export function LineChart({
       </div>
       {active ? (
         <div
-          className="pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 border px-2 py-1 text-xs font-semibold"
+          className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2 whitespace-nowrap border px-2 py-1 text-xs font-semibold"
           style={{
             background: "var(--card)",
             borderColor: "var(--line)",
             borderRadius: "var(--radius-sm)",
             boxShadow: "var(--shadow-sm)",
+            maxWidth: "calc(100% - 0.5rem)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
           }}
         >
           {fmtTick(active.key)} · {formatPoints(active.score)}/{formatPoints(active.total)} pts ·{" "}

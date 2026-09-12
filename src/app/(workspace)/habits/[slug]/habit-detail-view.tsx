@@ -295,14 +295,14 @@ export function HabitDetailView({ slug }: { slug: string }) {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <div className="card p-5">
+        <div className="card min-w-0 p-5">
           <p className="eyebrow">Contribution over time</p>
           <h2 className="mb-3 text-lg font-semibold">
             {range === "week" ? "This week" : range === "month" ? "Last 30 days" : range === "year" ? "Last 365 days" : "All time"}
           </h2>
           <LineChart data={lineSeries} color={habit.color} height={200} />
         </div>
-        <div className="card p-5">
+        <div className="card min-w-0 p-5">
           <p className="eyebrow">Overall daily rating</p>
           <h2 className="mb-3 text-lg font-semibold">How your days rated</h2>
           <LineChart data={ratingTrend} height={200} />
@@ -310,7 +310,7 @@ export function HabitDetailView({ slug }: { slug: string }) {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-3">
-        <div className="card p-5 lg:col-span-2">
+        <div className="card min-w-0 p-5 lg:col-span-2">
           <p className="eyebrow">Weekly occurrences</p>
           <h2 className="mb-3 text-lg font-semibold">Occurrences per week</h2>
           <BarChart
@@ -320,7 +320,7 @@ export function HabitDetailView({ slug }: { slug: string }) {
             height={200}
           />
         </div>
-        <div className="card p-5">
+        <div className="card min-w-0 p-5">
           <p className="eyebrow">Streak visualization</p>
           <h2 className="mb-3 text-lg font-semibold">Last 28 days</h2>
           <StreakStrip

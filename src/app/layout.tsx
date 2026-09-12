@@ -17,7 +17,7 @@ const sourceSerif4 = Source_Serif_4({ subsets: ["latin"], variable: "--font-sour
 const ibmPlexSans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-ibm-plex-sans", display: "swap" });
 const ibmPlexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-ibm-plex-mono", display: "swap" });
 
-export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://tenpoint.app";
+export const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://tenpoint.vercel.app";
 export const SITE_NAME = "TenPoint";
 export const SITE_TAGLINE = "Daily habit tracker, planner & productivity dashboard";
 

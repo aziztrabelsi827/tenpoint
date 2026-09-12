@@ -232,7 +232,7 @@ export function Stat({
   accent?: string;
 }) {
   return (
-    <div className="card p-4">
+    <div className="card min-w-0 p-4">
       <p className="eyebrow">{label}</p>
       <p className="num mt-1.5 text-2xl font-bold leading-none md:text-[1.75rem]" style={{ color: accent }}>
         {value}

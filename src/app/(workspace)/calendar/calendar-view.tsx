@@ -16,6 +16,7 @@ import {
   formatDuration,
   formatLong,
   formatMedium,
+  formatWeekRange,
   monthLabel,
   rangeKeys,
   startOfMonth,
@@ -659,7 +660,7 @@ export function CalendarView() {
     view === "month"
       ? monthLabel(cursor)
       : view === "week"
-        ? `${formatMedium(days[0])} – ${formatMedium(days[days.length - 1])}`
+        ? formatWeekRange(days[0], days[days.length - 1])
         : formatLong(cursor);
 
   const scoringCtx = useMemo(

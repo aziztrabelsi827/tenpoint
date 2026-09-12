@@ -39,15 +39,13 @@ export async function POST(request: Request) {
     // code. Supabase returns a generic error for an existing user; we surface a
     // neutral message and let login be the source of truth.
     const supabase = await getSupabaseServerClient();
-    const emailRedirectTo = new URL("/auth/callback", request.url).toString();
 
+    // `data: { name }` is written into the user's raw metadata so the
+    // `on_auth_user_created` trigger can seed `profiles.full_name`/`display_name`.
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: {
-        emailRedirectTo,
-        data: { name },
-      },
+      options: { data: { name } },
     });
 
     if (error) {
@@ -58,8 +56,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Could not create your account." }, { status: 400 });
     }
 
-    const needsConfirmation = !!data.session === false;
-    return NextResponse.json({ ok: true, needsConfirmation });
+    // Email confirmation is disabled, so a successful signup must return an
+    // authenticated session immediately. The client redirects straight to
+    // /dashboard when it sees one; there is no confirmation-waiting screen.
+    if (data.session) {
+      return NextResponse.json({ ok: true });
+    }
+
+    // No session and no error is not expected with confirmation disabled;
+    // surface a neutral failure rather than pretending the flow succeeded.
+    return NextResponse.json({ error: "Could not create your account." }, { status: 400 });
   } catch {
     return NextResponse.json({ error: "Could not create your account." }, { status: 500 });
   }

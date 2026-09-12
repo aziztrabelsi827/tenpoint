@@ -161,12 +161,12 @@ export function StatsView() {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <div className="card p-5">
+        <div className="card min-w-0 p-5">
           <p className="eyebrow">Weekly average</p>
           <h2 className="mb-3 text-lg font-semibold">Average rating per week (16 weeks)</h2>
           <BarChart data={weekly} height={210} unit="/10" />
         </div>
-        <div className="card p-5">
+        <div className="card min-w-0 p-5">
           <p className="eyebrow">Monthly average</p>
           <h2 className="mb-3 text-lg font-semibold">Average rating per month (12 months)</h2>
           <BarChart data={monthly} height={210} unit="/10" />

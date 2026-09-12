@@ -36,6 +36,17 @@ export function TimerView() {
     sessionsBeforeLongBreak: settings.sessionsBeforeLongBreak,
   });
 
+  // Smaller ring on mobile so it sits comfortably inside the card gutter;
+  // desktop keeps the full 300px disc.
+  const [size, setSize] = useState(300);
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 640px)");
+    const update = () => setSize(mq.matches ? 300 : 248);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const totalFor = useCallback(
     (m: Mode) =>
@@ -129,7 +140,6 @@ export function TimerView() {
   const minutes = Math.floor(remaining / 60);
   const seconds = remaining % 60;
   const clock = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  const size = 300;
   const r = (size - 20) / 2;
   const c = 2 * Math.PI * r;
   const linkedHabit = habits.find((h) => String(h.id) === habitId);
@@ -165,7 +175,7 @@ export function TimerView() {
       </header>
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="card flex flex-col items-center gap-5 p-6">
+        <div className="card flex min-w-0 flex-col items-center gap-5 p-6">
           <div className="relative" style={{ width: size, maxWidth: "100%" }}>
             <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90" style={{ maxWidth: "100%" }}>
               <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--bg-subtle)" strokeWidth={16} />
@@ -184,7 +194,10 @@ export function TimerView() {
             </svg>
             <div className="absolute inset-0 grid place-content-center text-center">
               <p className="eyebrow">{meta.label}</p>
-              <p className="num text-[3.4rem] font-bold leading-none tabular-nums" aria-live="off">
+              <p
+                className="num text-[2.9rem] font-bold leading-none tabular-nums sm:text-[3.4rem]"
+                aria-live="off"
+              >
                 {clock}
               </p>
               <p className="mt-1 text-xs" style={{ color: "var(--fg-muted)" }}>
@@ -272,7 +285,7 @@ export function TimerView() {
           </div>
         </div>
 
-        <aside className="flex flex-col gap-4">
+        <aside className="flex min-w-0 flex-col gap-4">
           <div className="grid gap-4">
             <Stat label="Today's focus time" value={formatDuration(todayFocus.seconds)} sub={`${todayFocus.sessions} sessions completed`} accent="var(--primary)" />
             <Stat label="This week" value={formatDuration(focusTotals(focus, weekKeys).seconds)} sub={`${focusTotals(focus, weekKeys).sessions} sessions`} accent="var(--accent)" />

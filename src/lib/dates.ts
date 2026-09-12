@@ -117,6 +117,19 @@ export function monthLabel(key: string): string {
   return `${MONTH_LONG[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
+/** Compact, dependency-prefixed week range: "Sep 7–13, 2026". */
+export function formatWeekRange(a: string, b: string): string {
+  const da = fromKey(a);
+  const db = fromKey(b);
+  const sameYear = da.getUTCFullYear() === db.getUTCFullYear();
+  const sameMonth = sameYear && da.getUTCMonth() === db.getUTCMonth();
+  if (sameMonth)
+    return `${MONTH_SHORT[da.getUTCMonth()]} ${da.getUTCDate()}\u2013${db.getUTCDate()}, ${db.getUTCFullYear()}`;
+  if (sameYear)
+    return `${MONTH_SHORT[da.getUTCMonth()]} ${da.getUTCDate()} \u2013 ${MONTH_SHORT[db.getUTCMonth()]} ${db.getUTCDate()}, ${db.getUTCFullYear()}`;
+  return `${formatMedium(a)} \u2013 ${formatMedium(b)}`;
+}
+
 /** Greeting for a local hour (0–23). Compute the hour with `hourInZone`. */
 export function greetingForHour(hour: number): string {
   if (hour < 5) return "Burning the midnight oil";
