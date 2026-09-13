@@ -70,7 +70,9 @@ export function TasksView() {
   const [confirmId, setConfirmId] = useState<number | null>(null);
 
   const filtered = useMemo(() => {
-    let list = [...tasks];
+    // Archived tasks are hidden from every planning view (there is no archived
+    // tab; they exist only to preserve ratings after deletion).
+    let list = [...tasks].filter((t) => t.status !== "archived");
     if (filter === "today")
       list = list.filter((t) => t.day === today || (!t.day && taskProgressFor(taskProgress, t.id, today) > 0));
     if (filter === "upcoming") list = list.filter((t) => t.status !== "completed" && (!t.day || t.day > today));
@@ -94,9 +96,11 @@ export function TasksView() {
   }, [tasks, taskProgress, filter, priorityFilter, query, today]);
 
   const todayTasks = tasks.filter(
-    (t) => t.day === today || (!t.day && taskProgressFor(taskProgress, t.id, today) > 0),
+    (t) => t.status !== "archived" && (t.day === today || (!t.day && taskProgressFor(taskProgress, t.id, today) > 0)),
   );
-  const overdue = tasks.filter((t) => t.status !== "completed" && t.day && t.day < today).length;
+  const overdue = tasks.filter(
+    (t) => t.status !== "completed" && t.status !== "archived" && t.day && t.day < today,
+  ).length;
   const completedAll = tasks.filter((t) => t.status === "completed").length;
   const openAll = tasks.filter((t) => t.status !== "completed" && t.status !== "archived").length;
   const todayEarned = todayTasks.reduce(

@@ -66,11 +66,11 @@ const FEATURES = [
 ];
 
 const THEMES = [
-  { name: "Soft Minimal", tag: "Cream & pastel", colors: ["#f7f3ec", "#d98a63", "#8fae8b"] },
+  { name: "Soft Minimal", tag: "Cream & pastel", colors: ["#f7f3ec", "#986145", "#8fae8b"] },
   { name: "Productivity", tag: "Spreadsheet crisp", colors: ["#f4f5f7", "#2563eb", "#0ea5a4"] },
   { name: "Dark", tag: "High contrast", colors: ["#0d1015", "#5b8def", "#22c8b0"] },
-  { name: "Nature", tag: "Muted greens", colors: ["#eef1e6", "#4d7c4a", "#b7854f"] },
-  { name: "Brutalist", tag: "Bold borders", colors: ["#fdfdfb", "#ff4d1c", "#1a1aff"] },
+  { name: "Nature", tag: "Muted greens", colors: ["#eef1e6", "#497646", "#b7854f"] },
+  { name: "Brutalist", tag: "Bold borders", colors: ["#fdfdfb", "#cc3e16", "#1a1aff"] },
   { name: "Custom", tag: "Your own tokens", colors: ["#f6f7f9", "#4f46e5", "#06b6d4"] },
 ];
 

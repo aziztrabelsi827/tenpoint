@@ -325,13 +325,13 @@ export function SettingsView({ userName }: { userName: string }) {
           calendar, streaks and the calendar — so the day rolls over at <em>your</em> midnight, not UTC.
         </p>
         <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[14rem]">
+          <div className="min-w-[min(14rem,100%)]">
             <label className="field-label" htmlFor="tz">
               IANA timezone
             </label>
             <select
               id="tz"
-              className="input"
+              className="input w-full min-w-0"
               value={settings.timezone}
               onChange={(e) => {
                 const tz = e.target.value;
@@ -351,7 +351,7 @@ export function SettingsView({ userName }: { userName: string }) {
           </div>
           <button
             type="button"
-            className="btn"
+            className="btn min-w-0 max-sm:w-full max-sm:whitespace-normal max-sm:leading-snug"
             onClick={() => {
               const detected = detectTimezone();
               if (!detected) {

@@ -12,7 +12,13 @@ export const metadata: Metadata = {
   title: "Log in",
   description: "Log in to your TenPoint habit tracker, daily planner and productivity dashboard.",
   alternates: { canonical: "/login" },
-  openGraph: { url: `${SITE_URL}/login`, title: "Log in · TenPoint" },
+  openGraph: {
+    url: `${SITE_URL}/login`,
+    title: "Log in · TenPoint",
+    siteName: "TenPoint",
+    locale: "en_US",
+    images: [{ url: `${SITE_URL}/opengraph-image`, width: 1200, height: 630, alt: "TenPoint — daily habit tracker, planner & productivity dashboard" }],
+  },
 };
 
 export default async function LoginPage() {

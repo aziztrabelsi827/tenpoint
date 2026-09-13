@@ -77,6 +77,16 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/dashboard/:path*",
+    "/habits/:path*",
+    "/tasks/:path*",
+    "/calendar/:path*",
+    "/timer/:path*",
+    "/stats/:path*",
+    "/settings/:path*",
+    "/login/:path*",
+    "/signup/:path*",
+    "/forgot-password/:path*",
+    "/reset-password/:path*",
   ],
 };

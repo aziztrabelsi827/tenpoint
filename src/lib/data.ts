@@ -151,7 +151,7 @@ export async function ensureStarterHabits(_userId?: string): Promise<void> {
 /* Row serialisation (PostgREST snake_case -> DTO)                     */
 /* ------------------------------------------------------------------ */
 
-type HabitRow = {
+export type HabitRow = {
   id: number;
   name: string;
   slug: string;
@@ -167,7 +167,7 @@ type HabitRow = {
   enabled: boolean;
 };
 
-function habitDTO(h: HabitRow): HabitDTO {
+export function habitDTO(h: HabitRow): HabitDTO {
   return {
     id: h.id,
     name: h.name,
@@ -185,7 +185,7 @@ function habitDTO(h: HabitRow): HabitDTO {
   };
 }
 
-type TaskRow = {
+export type TaskRow = {
   id: number;
   title: string;
   notes: string;
@@ -204,7 +204,7 @@ type TaskRow = {
   completed_at: string | null;
 };
 
-function taskDTO(t: TaskRow): TaskDTO {
+export function taskDTO(t: TaskRow): TaskDTO {
   return {
     id: t.id,
     title: t.title,
@@ -275,6 +275,88 @@ function focusDTO(f: FocusRow): FocusDTO {
   };
 }
 
+export type HabitLogRow = {
+  habit_id: number;
+  day: string;
+  count: number;
+  points_earned: number | null;
+  point_value_at_record: number | null;
+  target_count_at_record: number | null;
+  kind_at_record: string | null;
+};
+
+/** Builds the habit-log map with the shared snapshot semantics of the workspace. */
+export function habitLogMap(rows: HabitLogRow[]): HabitLogMap {
+  const logs: HabitLogMap = {};
+  for (const row of rows) {
+    const key = String(row.habit_id);
+    if (!logs[key]) logs[key] = {};
+    if (row.count > 0 || row.point_value_at_record != null) {
+      logs[key][row.day] = {
+        count: row.count,
+        points: Number(row.points_earned ?? 0),
+        pointValueAtRecord:
+          row.point_value_at_record == null ? null : Number(row.point_value_at_record),
+        targetCountAtRecord:
+          row.target_count_at_record == null ? null : Number(row.target_count_at_record),
+        kindAtRecord:
+          row.kind_at_record === "negative"
+            ? "negative"
+            : row.kind_at_record === "positive"
+              ? "positive"
+              : null,
+      };
+    }
+  }
+  return logs;
+}
+
+export type TaskProgressLogRow = {
+  task_id: number;
+  day: string;
+  progress: number;
+  points_earned: number | null;
+  target_value_at_record: number | null;
+  max_points_at_record: number | null;
+  measure_type_at_record: string | null;
+  unit_at_record: string | null;
+};
+
+/** Builds the task-progress map with the shared snapshot semantics of the workspace. */
+export function taskProgressLogMap(rows: TaskProgressLogRow[]): TaskProgressMap {
+  const taskProgress: TaskProgressMap = {};
+  for (const row of rows) {
+    const key = String(row.task_id);
+    if (!taskProgress[key]) taskProgress[key] = {};
+    taskProgress[key][row.day] = {
+      progress: Number(row.progress ?? 0),
+      points: Number(row.points_earned ?? 0),
+      targetValueAtRecord:
+        row.target_value_at_record == null ? null : Number(row.target_value_at_record),
+      maxPointsAtRecord:
+        row.max_points_at_record == null ? null : Number(row.max_points_at_record),
+      measureTypeAtRecord:
+        row.measure_type_at_record === "time" ||
+        row.measure_type_at_record === "quantity" ||
+        row.measure_type_at_record === "count" ||
+        row.measure_type_at_record === "completion"
+          ? (row.measure_type_at_record as TaskDTO["measureType"])
+          : null,
+      unitAtRecord: row.unit_at_record == null ? null : String(row.unit_at_record),
+    };
+  }
+  return taskProgress;
+}
+
+type OccurrenceRow = {
+  id: number;
+  habit_id: number;
+  day: string;
+  occurrence_index: number;
+  scheduled_time: string | null;
+  completed: boolean;
+};
+
 /* ------------------------------------------------------------------ */
 /* Workspace load                                                      */
 /* ------------------------------------------------------------------ */
@@ -342,24 +424,10 @@ export async function loadWorkspace(_userIdHint?: string): Promise<WorkspaceDTO>
     if (res.error) throw res.error;
   }
 
-  const logs: HabitLogMap = {};
-  for (const row of (logRes.data ?? []) as any[]) {
-    const key = String(row.habit_id);
-    if (!logs[key]) logs[key] = {};
-    if (row.count > 0 || row.point_value_at_record != null) {
-      logs[key][row.day] = {
-        count: row.count,
-        points: Number(row.points_earned ?? 0),
-        pointValueAtRecord: row.point_value_at_record == null ? null : Number(row.point_value_at_record),
-        targetCountAtRecord: row.target_count_at_record == null ? null : Number(row.target_count_at_record),
-        kindAtRecord:
-          row.kind_at_record === "negative" ? "negative" : row.kind_at_record === "positive" ? "positive" : null,
-      };
-    }
-  }
+  const logs = habitLogMap((logRes.data ?? []) as HabitLogRow[]);
 
   const occurrences: OccurrenceMap = {};
-  for (const row of (occRes.data ?? []) as any[]) {
+  for (const row of (occRes.data ?? []) as OccurrenceRow[]) {
     const idx = Number(row.occurrence_index);
     if (!Number.isFinite(idx)) continue;
     const habitKey = String(row.habit_id);
@@ -376,25 +444,7 @@ export async function loadWorkspace(_userIdHint?: string): Promise<WorkspaceDTO>
     };
   }
 
-  const taskProgress: TaskProgressMap = {};
-  for (const row of (progressRes.data ?? []) as any[]) {
-    const key = String(row.task_id);
-    if (!taskProgress[key]) taskProgress[key] = {};
-    taskProgress[key][row.day] = {
-      progress: Number(row.progress ?? 0),
-      points: Number(row.points_earned ?? 0),
-      targetValueAtRecord: row.target_value_at_record == null ? null : Number(row.target_value_at_record),
-      maxPointsAtRecord: row.max_points_at_record == null ? null : Number(row.max_points_at_record),
-      measureTypeAtRecord:
-        row.measure_type_at_record === "time" ||
-        row.measure_type_at_record === "quantity" ||
-        row.measure_type_at_record === "count" ||
-        row.measure_type_at_record === "completion"
-          ? (row.measure_type_at_record as TaskDTO["measureType"])
-          : null,
-      unitAtRecord: row.unit_at_record == null ? null : String(row.unit_at_record),
-    };
-  }
+  const taskProgress = taskProgressLogMap((progressRes.data ?? []) as TaskProgressLogRow[]);
 
   return {
     habits: (habitRes.data ?? []).map((h: any) => habitDTO(h as HabitRow)),

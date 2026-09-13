@@ -61,7 +61,7 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     fg: "#3f382e",
     fgMuted: "#7a6f5f",
     fgSubtle: "#a29682",
-    primary: "#d98a63",
+    primary: "#986145",
     primaryFg: "#ffffff",
     accent: "#8fae8b",
     positive: "#6f9e6b",
@@ -80,8 +80,8 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     fontData: "var(--font-dm-sans)",
     surface1: "#fefcf6",
     surface2: "#fff9ee",
-    shadowGlow: "0 0 20px rgba(217, 138, 99, 0.15)",
-    bgGradient: "radial-gradient(ellipse at 20% 0%, rgba(217,138,99,0.06) 0%, transparent 50%)",
+    shadowGlow: "0 0 20px rgba(152, 97, 69, 0.15)",
+    bgGradient: "radial-gradient(ellipse at 20% 0%, rgba(152,97,69,0.06) 0%, transparent 50%)",
   },
   productivity: {
     bg: "#f4f5f7",
@@ -157,7 +157,7 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     fg: "#28331f",
     fgMuted: "#5d6b4c",
     fgSubtle: "#8b977a",
-    primary: "#4d7c4a",
+    primary: "#497646",
     primaryFg: "#ffffff",
     accent: "#b7854f",
     positive: "#4d7c4a",
@@ -176,8 +176,8 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     fontData: "var(--font-ibm-plex-mono)",
     surface1: "#f5f8ef",
     surface2: "#ecf0e4",
-    shadowGlow: "0 0 20px rgba(77, 124, 74, 0.1)",
-    bgGradient: "radial-gradient(ellipse at 80% 100%, rgba(77,124,74,0.05) 0%, transparent 50%)",
+    shadowGlow: "0 0 20px rgba(73, 118, 70, 0.1)",
+    bgGradient: "radial-gradient(ellipse at 80% 100%, rgba(73,118,70,0.05) 0%, transparent 50%)",
   },
   brutalist: {
     bg: "#fdfdfb",
@@ -189,7 +189,7 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     fg: "#0a0a0a",
     fgMuted: "#4a4a4a",
     fgSubtle: "#787878",
-    primary: "#ff4d1c",
+    primary: "#cc3e16",
     primaryFg: "#ffffff",
     accent: "#1a1aff",
     positive: "#0a8f3c",
@@ -221,7 +221,7 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     fg: "#3a2e22",
     fgMuted: "#7a6850",
     fgSubtle: "#a89278",
-    primary: "#c26e3d",
+    primary: "#a55d34",
     primaryFg: "#ffffff",
     accent: "#d4976a",
     positive: "#7a9e5c",
@@ -240,8 +240,8 @@ export const THEME_PRESETS: Record<Exclude<ThemeId, "custom">, ThemeTokens> = {
     fontData: "var(--font-dm-sans)",
     surface1: "#fef8f0",
     surface2: "#fdf2e6",
-    shadowGlow: "0 0 24px rgba(194, 110, 61, 0.15)",
-    bgGradient: "radial-gradient(ellipse at 30% 0%, rgba(194,110,61,0.08) 0%, transparent 50%, rgba(212,151,106,0.04) 80%, transparent 100%)",
+    shadowGlow: "0 0 24px rgba(165, 93, 52, 0.15)",
+    bgGradient: "radial-gradient(ellipse at 30% 0%, rgba(165,93,52,0.08) 0%, transparent 50%, rgba(212,151,106,0.04) 80%, transparent 100%)",
   },
   aurora: {
     bg: "#0b1021",
@@ -316,7 +316,7 @@ export const THEME_LIST: ThemeMeta[] = [
     tagline: "Cream & pastel",
     description:
       "Warm cream canvas, pastel cards and generous rounding. Calm, quiet and easy on the eyes for long daily use.",
-    swatch: ["#f7f3ec", "#d98a63", "#8fae8b"],
+    swatch: ["#f7f3ec", "#986145", "#8fae8b"],
   },
   {
     id: "productivity",
@@ -340,7 +340,7 @@ export const THEME_LIST: ThemeMeta[] = [
     tagline: "Muted greens",
     description:
       "Soft sage greens with organic rounding for a slower, steadier pace of building habits.",
-    swatch: ["#eef1e6", "#4d7c4a", "#b7854f"],
+    swatch: ["#eef1e6", "#497646", "#b7854f"],
   },
   {
     id: "brutalist",
@@ -348,7 +348,7 @@ export const THEME_LIST: ThemeMeta[] = [
     tagline: "Bold borders",
     description:
       "Heavy borders, hard shadows and confident typography. Structure you can feel.",
-    swatch: ["#fdfdfb", "#ff4d1c", "#1a1aff"],
+    swatch: ["#fdfdfb", "#cc3e16", "#1a1aff"],
   },
   {
     id: "sunset",
@@ -356,7 +356,7 @@ export const THEME_LIST: ThemeMeta[] = [
     tagline: "Warm terracotta",
     description:
       "Warm cream backgrounds with terracotta and peach accents. Soft shadows and organic warmth.",
-    swatch: ["#faf5ee", "#c26e3d", "#d4976a"],
+    swatch: ["#faf5ee", "#a55d34", "#d4976a"],
   },
   {
     id: "aurora",

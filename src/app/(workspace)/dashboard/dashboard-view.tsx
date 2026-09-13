@@ -136,6 +136,9 @@ export function DashboardView({ userName, greeting }: { userName: string; greeti
       });
     }
     for (const task of tasks) {
+      // Archived tasks are hidden-from-planning (status-archived): they must not
+      // surface again on "today" or as a re-claimable inline action.
+      if (task.status === "archived") continue;
       if (task.day && task.day !== today) continue;
       const progress = taskProgressFor(taskProgress, task.id, today);
       const target = taskTarget(task);
@@ -217,10 +220,17 @@ export function DashboardView({ userName, greeting }: { userName: string; greeti
     }
     for (const f of focus) {
       if (f.day !== today || f.mode !== "focus" || !f.completed) continue;
-      out.push({ time: 8 * 60, timeLabel: minutesToTime(8 * 60), title: `Focus · ${formatDuration(f.seconds)}`, kind: "focus", color: "#8b5cf6", href: "/timer" });
+      // Prefer the session's REAL local start time; fall back to 08:00 only
+      // for legacy records that predate `started_at`.
+      let start = 8 * 60;
+      if (f.startedAt) {
+        const ms = Date.parse(f.startedAt);
+        if (!Number.isNaN(ms)) start = minutesInZone(new Date(ms), timezone);
+      }
+      out.push({ time: start, timeLabel: minutesToTime(start), title: `Focus · ${formatDuration(f.seconds)}`, kind: "focus", color: "#8b5cf6", href: "/timer" });
     }
     return out.sort((a, b) => a.time - b.time);
-  }, [events, tasks, focus, today]);
+  }, [events, tasks, focus, today, timezone]);
 
   const [nowMinutes, setNowMinutes] = useState<number | null>(null);
   useEffect(() => {
@@ -341,9 +351,11 @@ export function DashboardView({ userName, greeting }: { userName: string; greeti
             Over-configured: {formatPoints(rating.habitAvailable + rating.taskAvailable)} of reward
             configured. Rating caps at 10.
           </p>
-        ) : Math.abs(configured - 10) > 0.01 ? (
+        ) : configured < 9.99 ? (
           <p className="tp-dash-note">
-            Positive habit weights total {formatPoints(configured)} — aim for 10.
+            Your positive habits are worth +{formatPoints(configured)} of the 10 points today —{" "}
+            <Link href="/habits" className="tp-dash-note-link">add or raise a habit</Link> to unlock
+            the full 10.
           </p>
         ) : null}
       </section>

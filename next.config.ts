@@ -34,6 +34,8 @@ const securityHeaders = [
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
       "connect-src 'self'",
+      "object-src 'none'",
+      "upgrade-insecure-requests",
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",

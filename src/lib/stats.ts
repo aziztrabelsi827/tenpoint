@@ -16,6 +16,7 @@ import {
   weekdayOf,
 } from "@/lib/dates";
 import { roundPoints } from "@/lib/format";
+import { ratioFor } from "@/lib/tasks";
 import { RATING_MAX, type HabitDTO, type HabitLogMap, type TaskProgressMap } from "@/lib/types";
 import type { TaskDTO } from "@/lib/types";
 import {
@@ -389,19 +390,35 @@ export function monthlyBuckets(ctx: ScoringContext, months: number): Bucket[] {
   return out.reverse();
 }
 
+export type HabitComparisonRow = {
+  habit: HabitDTO;
+  occurrences: number;
+  target: number;
+  rate: number;
+};
+
 export function habitComparison(
   ctx: ScoringContext,
   keys: string[],
-): { habit: HabitDTO; occurrences: number; target: number; rate: number }[] {
+): HabitComparisonRow[] {
   return ctx.habits
     .filter((h) => h.enabled)
     .map((habit) => {
       let occurrences = 0;
       let target = 0;
+      const configuredTarget = Math.max(1, habit.targetCount);
       for (const key of keys) {
-        if (!isScheduled(habit, key, weekdayOf)) continue;
+        const entry = ctx.habitLogs[String(habit.id)]?.[key];
+        // A recorded log means the habit participated that day regardless of
+        // the CURRENT schedule; only unrecorded days consult it.
+        if (!entry && !isScheduled(habit, key, weekdayOf)) continue;
+        // The recorded kind/target win over the current configuration, so
+        // historical rates stay frozen when a habit's type or repetitions
+        // change — same snapshot rule habitStats/scoreDay apply.
+        const dayKind = habitKindFor(habit, ctx.habitLogs, key, ctx.today);
+        const dayTarget = entry?.targetCountAtRecord ?? configuredTarget;
         occurrences += countFor(ctx.habitLogs, habit.id, key);
-        target += habit.kind === "negative" ? 0 : Math.max(1, habit.targetCount);
+        target += dayKind === "negative" ? 0 : Math.max(1, dayTarget);
       }
       return {
         habit,
@@ -452,5 +469,41 @@ export function focusTotals(
   }
   return { seconds, sessions };
 }
+
+export type StatsTaskRow = { task: TaskDTO; progress: number; earned: number; ratio: number };
+
+/**
+ * Per-task reward rows over an unbounded day span. Days with any recorded
+ * progress contribute their stored snapshot; every day with at least one
+ * progress log counts toward the running total, so the whole history is
+ * aggregated without ever shipping the raw logs to the client.
+ */
+export function allTimeTaskRows(ctx: ScoringContext, keys: string[]): StatsTaskRow[] {
+  return ctx.tasks
+    .map((t) => {
+      const days = Object.keys(ctx.taskProgress[String(t.id)] ?? {});
+      const progress = days.reduce((a, d) => a + taskProgressFor(ctx.taskProgress, t.id, d), 0);
+      const earned = days.reduce(
+        (a, d) => a + taskContributionFor(t, t.id, ctx.taskProgress, d, ctx.today),
+        0,
+      );
+      return { task: t, progress, earned, ratio: ratioFor(t, progress) };
+    })
+    .filter((r) => r.progress > 0 || (r.task.day && keys.includes(r.task.day)))
+    .sort((a, b) => b.ratio - a.ratio);
+}
+
+export type AllTimeStats = {
+  days: number;
+  from: string;
+  series: RatingPoint[];
+  overall: OverallStats;
+  comparison: HabitComparisonRow[];
+  taskRows: StatsTaskRow[];
+  weekly: Bucket[];
+  monthly: Bucket[];
+  focusSeconds: number;
+  focusSessions: number;
+};
 
 export { ctxOf };

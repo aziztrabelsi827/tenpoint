@@ -12,7 +12,13 @@ export const metadata: Metadata = {
   description:
     "Create a free TenPoint account and build your own habit tracker with custom point values, a daily rating out of 10, a full calendar and Pomodoro timer.",
   alternates: { canonical: "/signup" },
-  openGraph: { url: `${SITE_URL}/signup`, title: "Create a free account · TenPoint" },
+  openGraph: {
+    url: `${SITE_URL}/signup`,
+    title: "Create a free account · TenPoint",
+    siteName: "TenPoint",
+    locale: "en_US",
+    images: [{ url: `${SITE_URL}/opengraph-image`, width: 1200, height: 630, alt: "TenPoint — daily habit tracker, planner & productivity dashboard" }],
+  },
 };
 
 export default async function SignupPage() {

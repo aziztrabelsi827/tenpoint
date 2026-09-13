@@ -50,21 +50,21 @@ export function HabitsView() {
             its own weight and daily target — the rating itself is always out of 10.
           </p>
         </div>
-        <div className="surface flex items-center gap-5 px-4 py-3">
-          <div>
+        <div className="surface flex flex-wrap items-center gap-x-5 gap-y-1.5 px-4 py-3">
+          <div className="min-w-0">
             <p className="eyebrow">Habits</p>
             <p className="num text-xl font-bold">
               {used}
               <span style={{ color: "var(--fg-subtle)" }}>/{MAX_HABITS}</span>
             </p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="eyebrow">Positive weight</p>
             <p className="num text-xl font-bold" style={{ color: Math.abs(positiveWeight - 10) > 0.01 ? "var(--warn)" : "var(--positive)" }}>
               {formatPoints(positiveWeight)}
             </p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="eyebrow">Penalties</p>
             <p className="num text-xl font-bold" style={{ color: negatives.length > 0 ? "var(--danger)" : "var(--fg-subtle)" }}>
               {negatives.length}
@@ -131,10 +131,10 @@ export function HabitsView() {
             {rows.map(({ habit, allTime, scoped }) => (
               <article
                 key={habit.id}
-                className="card flex flex-col gap-3 p-4 transition-transform hover:-translate-y-0.5"
+                className="card flex w-full min-w-0 max-w-full flex-col gap-3 p-4 transition-transform hover:-translate-y-0.5"
                 style={{ borderTop: `3px solid ${habit.color}` }}
               >
-                <div className="flex items-start gap-3">
+                <div className="flex w-full min-w-0 items-start gap-3">
                   <span
                     aria-hidden
                     className="grid h-10 w-10 shrink-0 place-items-center text-lg"
@@ -146,11 +146,11 @@ export function HabitsView() {
                     {habit.icon}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <Link href={`/habits/${habit.slug}`} className="block truncate text-base font-semibold hover:underline">
+                    <Link href={`/habits/${habit.slug}`} className="block break-words text-base font-semibold hover:underline">
                       {habit.name}
                     </Link>
                     <p
-                      className="truncate text-[11px] font-semibold uppercase"
+                      className="break-words text-[11px] font-semibold uppercase leading-snug"
                       style={{ color: habit.kind === "negative" ? "var(--danger)" : "var(--fg-subtle)" }}
                     >
                       {habit.kind === "negative" ? "− penalty" : "＋ positive"}
@@ -168,18 +168,18 @@ export function HabitsView() {
                     {habit.description}
                   </p>
                 ) : null}
-                <dl className="grid grid-cols-3 gap-2 text-center">
-                  <div className="surface py-2">
+                <dl className="grid w-full min-w-0 grid-cols-3 gap-2 text-center">
+                  <div className="surface min-w-0 px-1 py-2">
                     <dt className="eyebrow">Streak</dt>
                     <dd className="num text-base font-bold">{scoped.currentStreak}d</dd>
                   </div>
-                  <div className="surface py-2">
+                  <div className="surface min-w-0 px-1 py-2">
                     <dt className="eyebrow">Best</dt>
                     <dd className="num text-base font-bold">{allTime.longestStreak}d</dd>
                   </div>
-                  <div className="surface py-2">
+                  <div className="surface min-w-0 px-1 py-2">
                     <dt className="eyebrow">{habit.kind === "negative" ? "Occurrences" : "Target met"}</dt>
-                    <dd className="num text-base font-bold">
+                    <dd className="num text-base font-bold break-words">
                       {habit.kind === "negative" ? scoped.totalOccurrences : `${scoped.completionRate}%`}
                     </dd>
                   </div>
@@ -187,7 +187,7 @@ export function HabitsView() {
                 {habit.kind === "positive" ? (
                   <div>
                     <ProgressBar value={scoped.completionRate} max={100} color={habit.color} height={6} label={`${habit.name} target completion`} />
-                    <p className="mt-1.5 flex justify-between text-[11px]" style={{ color: "var(--fg-subtle)" }}>
+                    <p className="mt-1.5 flex flex-wrap justify-between gap-x-2 gap-y-0.5 text-[11px]" style={{ color: "var(--fg-subtle)" }}>
                       <span>
                         {scoped.last30.occurrences}/{scoped.last30.target} this month
                       </span>
@@ -200,7 +200,7 @@ export function HabitsView() {
                     {formatPoints(scoped.totalOccurrences * habit.pointValue)} total penalty
                   </p>
                 )}
-                <Link href={`/habits/${habit.slug}`} className="btn btn-sm self-start">
+                <Link href={`/habits/${habit.slug}`} className="btn btn-sm self-start max-sm:min-h-11 max-sm:px-4">
                   View analytics →
                 </Link>
               </article>

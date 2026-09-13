@@ -423,14 +423,14 @@ export function CompareBars({
   return (
     <ul className="flex flex-col gap-3">
       {rows.map((r) => (
-        <li key={r.label} className="flex items-center gap-3">
+        <li key={r.label} className="flex w-full min-w-0 items-center gap-3">
           <span className="w-6 text-center text-base" aria-hidden>
             {r.icon}
           </span>
           <div className="min-w-0 flex-1">
-            <div className="mb-1 flex items-baseline justify-between gap-2">
-              <span className="truncate text-sm font-semibold">{r.label}</span>
-              <span className="num text-xs font-bold" style={{ color: "var(--fg-muted)" }}>
+            <div className="mb-1 flex min-w-0 items-baseline justify-between gap-2">
+              <span className="min-w-0 truncate text-sm font-semibold">{r.label}</span>
+              <span className="num shrink-0 text-xs font-bold" style={{ color: "var(--fg-muted)" }}>
                 {r.value}%
               </span>
             </div>

@@ -200,10 +200,11 @@ export function AppShell({
         style={{ background: "var(--card)", borderColor: "var(--line)" }}
       >
         <Logo />
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <span className="chip num">
             <span style={{ color: "var(--primary)" }}>●</span>
-            {formatRating(rating)}/10 today
+            {formatRating(rating)}/10
+            <span className="hidden min-[420px]:inline"> today</span>
           </span>
           <Link href="/settings" className="btn btn-sm" aria-label="Open settings">
             ⚙
@@ -265,7 +266,7 @@ export function AppShell({
       {/* Mobile bottom nav */}
       <nav
         aria-label="Primary"
-        className="fixed bottom-0 left-0 right-0 z-50 flex border-t lg:hidden"
+        className="fixed bottom-0 left-0 right-0 z-50 flex max-w-full border-t lg:hidden"
         style={{ background: "var(--card)", borderColor: "var(--line)", paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         {primary.map((item) => {
@@ -275,26 +276,26 @@ export function AppShell({
               key={item.href}
               href={item.href}
               aria-current={active ? "page" : undefined}
-              className="flex min-h-[52px] flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold"
+              className="flex min-h-[52px] min-w-0 flex-1 flex-col items-center gap-0.5 py-1.5 text-center text-[10px] font-semibold leading-tight"
               style={{ color: active ? "var(--primary)" : "var(--fg-subtle)" }}
             >
               <span aria-hidden className="text-lg leading-none">
                 {item.icon}
               </span>
-              {item.label}
+              <span className="break-words">{item.label}</span>
             </Link>
           );
         })}
         <button
           type="button"
           onClick={() => setMobileMore(true)}
-          className="flex min-h-[52px] flex-1 flex-col items-center gap-0.5 py-1.5 text-[10px] font-semibold"
+          className="flex min-h-[52px] min-w-0 flex-1 flex-col items-center gap-0.5 py-1.5 text-center text-[10px] font-semibold leading-tight"
           style={{ color: "var(--fg-subtle)" }}
         >
           <span aria-hidden className="text-lg leading-none">
             ⋯
           </span>
-          More
+          <span className="break-words">More</span>
         </button>
       </nav>
     </div>

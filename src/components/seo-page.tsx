@@ -229,7 +229,23 @@ export function seoMetadata(slug: string): Metadata | null {
       url: `${SITE_URL}/${page.slug}`,
       title: page.metaTitle,
       description: page.metaDescription,
+      siteName: "TenPoint",
+      locale: "en_US",
+      images: [
+        {
+          url: `${SITE_URL}/opengraph-image`,
+          width: 1200,
+          height: 630,
+          type: "image/png",
+          alt: "TenPoint — daily habit tracker, planner & productivity dashboard",
+        },
+      ],
     },
-    twitter: { card: "summary_large_image", title: page.metaTitle, description: page.metaDescription },
+    twitter: {
+      card: "summary_large_image",
+      title: page.metaTitle,
+      description: page.metaDescription,
+      images: [`${SITE_URL}/opengraph-image`],
+    },
   };
 }

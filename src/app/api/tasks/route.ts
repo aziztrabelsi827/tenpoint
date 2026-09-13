@@ -148,6 +148,30 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Maximum reward must be between 0 and 10." }, { status: 400 });
   }
 
+  const startTime = TIME_RE.test(body.startTime ?? "") ? (body.startTime as string) : null;
+  const endTime = TIME_RE.test(body.endTime ?? "") ? (body.endTime as string) : null;
+  if (startTime && endTime && startTime > endTime) {
+    return NextResponse.json({ error: "Task end time must be after its start time." }, { status: 400 });
+  }
+
+  // A task may link a habit, but only one the session user owns. The FK alone
+  // can't scope by owner, so the reference is resolved explicitly first.
+  let habitId: number | null = null;
+  if (body.habitId != null) {
+    const parsed = Math.round(Number(body.habitId));
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return NextResponse.json({ error: "Task needs a valid habit." }, { status: 400 });
+    }
+    const { data: habit } = await supabase
+      .from("habits")
+      .select("id")
+      .eq("id", parsed)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (!habit) return NextResponse.json({ error: "Habit not found." }, { status: 404 });
+    habitId = parsed;
+  }
+
   const { data: inserted, error } = await supabase
     .from("tasks")
     .insert({
@@ -162,9 +186,9 @@ export async function POST(request: Request) {
       unit: measure.unit,
       max_points: measure.maxPoints,
       day,
-      start_time: TIME_RE.test(body.startTime ?? "") ? (body.startTime as string) : null,
-      end_time: TIME_RE.test(body.endTime ?? "") ? (body.endTime as string) : null,
-      habit_id: body.habitId ?? null,
+      start_time: startTime,
+      end_time: endTime,
+      habit_id: habitId,
       completed_at: status === "completed" ? new Date().toISOString() : null,
     })
     .select("*")
@@ -233,7 +257,39 @@ export async function PATCH(request: Request) {
     patch.start_time = body.startTime;
   if (body.endTime === null || (typeof body.endTime === "string" && TIME_RE.test(body.endTime)))
     patch.end_time = body.endTime;
-  if (body.habitId === null || typeof body.habitId === "number") patch.habit_id = body.habitId;
+
+  // A relink must point to a habit the session user owns; null explicitly
+  // detaches the task. Ownership is resolved before the write so a foreign id
+  // can never be persisted (RLS WITH CHECK is the final safety net).
+  if (body.habitId !== undefined) {
+    if (body.habitId === null) {
+      patch.habit_id = null;
+    } else {
+      const parsed = Math.round(Number(body.habitId));
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return NextResponse.json({ error: "Task needs a valid habit." }, { status: 400 });
+      }
+      const { data: habit } = await supabase
+        .from("habits")
+        .select("id")
+        .eq("id", parsed)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!habit) return NextResponse.json({ error: "Habit not found." }, { status: 404 });
+      patch.habit_id = parsed;
+    }
+  }
+
+  // Either slot may change alone (e.g. drag-to-resize sends just an end time).
+  // Validate the resulting pair against the stored partner so the effective
+  // range never inverts.
+  if (patch.start_time !== undefined || patch.end_time !== undefined) {
+    const start = patch.start_time !== undefined ? (patch.start_time as string) : existing.startTime;
+    const end = patch.end_time !== undefined ? (patch.end_time as string) : existing.endTime;
+    if (start && end && start > end) {
+      return NextResponse.json({ error: "Task end time must be after its start time." }, { status: 400 });
+    }
+  }
 
   if (typeof body.status === "string" && STATUSES.includes(body.status as TaskStatus)) {
     patch.status = body.status;

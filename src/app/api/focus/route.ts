@@ -69,6 +69,35 @@ export async function POST(request: Request) {
    */
   const day = dayKeyInZone(startedAtIso, timezone);
 
+  /**
+   * Links to a habit or task must resolve to a row the session user owns —
+   * the `user_id` scoping lives purely in the application, so a foreign id is
+   * dropped rather than persisted. A task link is reused below to add
+   * time-measured progress.
+   */
+  let habitLink: number | null = null;
+  if (body.habitId != null && Number.isFinite(Number(body.habitId))) {
+    const hid = Math.round(Number(body.habitId));
+    const { data: ownedHabit } = await supabase
+      .from("habits")
+      .select("id")
+      .eq("id", hid)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (ownedHabit) habitLink = hid;
+  }
+  let taskLink: number | null = null;
+  if (body.taskId != null && Number.isFinite(Number(body.taskId))) {
+    const tid = Math.round(Number(body.taskId));
+    const { data: ownedTask } = await supabase
+      .from("tasks")
+      .select("id")
+      .eq("id", tid)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (ownedTask) taskLink = tid;
+  }
+
   const { data: row, error } = await supabase
     .from("focus_sessions")
     .insert({
@@ -76,8 +105,8 @@ export async function POST(request: Request) {
       mode,
       seconds,
       completed: true,
-      habit_id: body.habitId ?? null,
-      task_id: body.taskId ?? null,
+      habit_id: habitLink,
+      task_id: taskLink,
       day,
       started_at: startedAtIso.toISOString(),
     })
@@ -100,7 +129,7 @@ export async function POST(request: Request) {
 
   // Timer -> time-measured task progress, on the same local day.
   let progressResult: { progress: number; points: number } | null = null;
-  const taskId = Number(body.taskId);
+  const taskId = taskLink ?? 0;
   if (mode === "focus" && Number.isFinite(taskId) && taskId > 0) {
     const { data: task, error: taskReadError } = await supabase
       .from("tasks")

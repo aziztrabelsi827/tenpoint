@@ -58,6 +58,9 @@ export async function POST(request: Request) {
 
   const startTime = TIME_RE.test(body.startTime ?? "") ? (body.startTime as string) : "09:00";
   const endTime = TIME_RE.test(body.endTime ?? "") ? (body.endTime as string) : "10:00";
+  if (startTime > endTime) {
+    return NextResponse.json({ error: "Event end time must be after its start time." }, { status: 400 });
+  }
   const color = /^#[0-9a-fA-F]{6}$/.test(body.color ?? "") ? (body.color as string) : "";
 
   const { data, error } = await supabase
@@ -111,6 +114,28 @@ export async function PATCH(request: Request) {
   }
 
   if (Object.keys(patch).length === 0) return NextResponse.json({ ok: true });
+
+  // When either slot changes, validate the resulting pair so a moved end while
+  // another client holds the start can never produce an inverted range.
+  if (patch.start_time !== undefined || patch.end_time !== undefined) {
+    const { data: cur } = await supabase
+      .from("calendar_events")
+      .select("start_time, end_time")
+      .eq("id", body.id)
+      .eq("user_id", userId)
+      .maybeSingle();
+    const start = patch.start_time !== undefined ? (patch.start_time as string) : cur?.start_time;
+    const end = patch.end_time !== undefined ? (patch.end_time as string) : cur?.end_time;
+    if (
+      start != null &&
+      end != null &&
+      start !== "" &&
+      end !== "" &&
+      start > end
+    ) {
+      return NextResponse.json({ error: "Event end time must be after its start time." }, { status: 400 });
+    }
+  }
 
   // RLS's WITH CHECK ensures an update can only ever touch the session user's
   // own rows, even if a foreign id were supplied.

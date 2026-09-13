@@ -129,6 +129,8 @@ export function CalendarView() {
   const [editingTask, setEditingTask] = useState<TaskDTO | null>(null);
   /** Desktop (sm+) anchors the chooser to the slot; mobile renders a bottom sheet. */
   const [isDesktop, setIsDesktop] = useState(false);
+  /** Touch/coarse pointers can't emit a reliable double-click: tap = drill-in. */
+  const [coarsePointer, setCoarsePointer] = useState(false);
   /** Pointer presses on empty slots, keyed by pointerId (never opens in pointerdown). */
   const pendingTapsRef = useRef(new Map<number, PendingTap>());
   const createMenuRef = useRef<HTMLDivElement | null>(null);
@@ -187,6 +189,14 @@ export function CalendarView() {
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 640px)");
     const update = () => setIsDesktop(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)");
+    const update = () => setCoarsePointer(mq.matches);
     update();
     mq.addEventListener("change", update);
     return () => mq.removeEventListener("change", update);
@@ -909,6 +919,7 @@ export function CalendarView() {
               today={today}
               isVisible={visibleItem}
               itemsByDay={itemsByDay}
+              coarsePointer={coarsePointer}
               onSelect={(d) => {
                 // Selecting a day in month view stays inside that month.
                 setSelected(d);
@@ -1681,6 +1692,7 @@ function MonthGrid({
   itemsByDay,
   today,
   isVisible,
+  coarsePointer,
   onSelect,
   onOpenDay,
 }: {
@@ -1689,6 +1701,8 @@ function MonthGrid({
   itemsByDay: Map<string, GridItem[]>;
   today: string;
   isVisible: (item: GridItem) => boolean;
+  /** Touch/coarse devices get drill-in on the first tap (double-click is not discoverable). */
+  coarsePointer: boolean;
   onSelect: (day: string) => void;
   onOpenDay: (day: string) => void;
 }) {
@@ -1714,8 +1728,17 @@ function MonthGrid({
             <button
               key={day}
               type="button"
-              onClick={() => onSelect(day)}
-              onDoubleClick={() => onOpenDay(day)}
+              onClick={(e) => {
+                if (coarsePointer || e.detail >= 2) onOpenDay(day);
+                else onSelect(day);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onOpenDay(day);
+                }
+              }}
+              aria-current={isToday ? "date" : undefined}
               className="flex min-h-[104px] cursor-pointer flex-col gap-1 border-b border-r p-1.5 text-left transition-colors last:border-r-0"
               style={{
                 borderColor: "var(--grid-line)",

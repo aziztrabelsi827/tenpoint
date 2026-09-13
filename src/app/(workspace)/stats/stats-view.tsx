@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BarChart, CompareBars, Heatmap, LineChart, buildWeeks } from "@/components/charts";
 import { EmptyState, ProgressBar, SectionHeader, Segmented, Stat } from "@/components/ui";
 import { useWorkspace } from "@/components/workspace";
@@ -15,12 +15,13 @@ import {
   ratingSeries,
   scoreDay,
   weeklyBuckets,
+  type AllTimeStats,
   type ScoringContext,
 } from "@/lib/stats";
 import { ratioFor } from "@/lib/tasks";
 import { taskContributionFor, taskProgressFor } from "@/lib/stats";
 
-type RangeId = "7" | "30" | "90" | "180" | "365" | "540";
+type RangeId = "7" | "30" | "90" | "180" | "365" | "all";
 
 const RANGES: { value: RangeId; label: string }[] = [
   { value: "7", label: "7 days" },
@@ -28,35 +29,78 @@ const RANGES: { value: RangeId; label: string }[] = [
   { value: "90", label: "3 months" },
   { value: "180", label: "6 months" },
   { value: "365", label: "1 year" },
-  { value: "540", label: "All time" },
+  { value: "all", label: "All time" },
 ];
 
 export function StatsView() {
   const { habits, logs, tasks, focus, taskProgress, today } = useWorkspace();
   const [range, setRange] = useState<RangeId>("30");
+  const [allTime, setAllTime] = useState<AllTimeStats | null>(null);
+
+  // "All time" spans more than the ~540 days the workspace ships to the client,
+  // so it is aggregated server-side and only the derived numbers land here.
+  useEffect(() => {
+    if (range !== "all") return;
+    let cancelled = false;
+    fetch("/api/stats/all", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("load failed"))))
+      .then((d: AllTimeStats) => {
+        if (!cancelled) setAllTime(d);
+      })
+      .catch(() => {
+        if (!cancelled) setAllTime(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [range]);
 
   const ctx: ScoringContext = useMemo(
     () => ({ habits, habitLogs: logs, tasks, taskProgress, today }),
     [habits, logs, tasks, taskProgress, today],
   );
 
-  // Extracted so the dependency array stays statically checkable.
-  const rangeDays = Number(range);
+  const allActive = range === "all" && allTime !== null;
+
+  // Extracted so the dependency array stays statically checkable. The "all"
+  // fallback (while the server data is in flight) shows the newest 540 days.
+  const rangeDays = range === "all" ? 540 : Number(range);
   const keys = useMemo(
     () => rangeKeys(addDays(today, -(rangeDays - 1)), today),
     [rangeDays, today],
   );
-  const series = useMemo(() => ratingSeries(ctx, keys), [ctx, keys]);
-  const stats = useMemo(() => overallStats(ctx, rangeDays), [ctx, rangeDays]);
-  const weekly = useMemo(() => weeklyBuckets(ctx, 16), [ctx]);
-  const monthly = useMemo(() => monthlyBuckets(ctx, 12), [ctx]);
-  const comparison = useMemo(() => habitComparison(ctx, keys), [ctx, keys]);
+  const series = useMemo(
+    () => (allActive ? allTime!.series : ratingSeries(ctx, keys)),
+    [allActive, allTime, ctx, keys],
+  );
+  const stats = useMemo(
+    () => (allActive ? allTime!.overall : overallStats(ctx, rangeDays)),
+    [allActive, allTime, ctx, rangeDays],
+  );
+  const weekly = useMemo(
+    () => (allActive ? allTime!.weekly : weeklyBuckets(ctx, 16)),
+    [allActive, allTime, ctx],
+  );
+  const monthly = useMemo(
+    () => (allActive ? allTime!.monthly : monthlyBuckets(ctx, 12)),
+    [allActive, allTime, ctx],
+  );
+  const comparison = useMemo(
+    () => (allActive ? allTime!.comparison : habitComparison(ctx, keys)),
+    [allActive, allTime, ctx, keys],
+  );
   const heatKeys = useMemo(() => rangeKeys(addDays(today, -363), today), [today]);
   const heat = useMemo(
     () => ratingSeries(ctx, heatKeys).map((p) => ({ key: p.key, score: p.rating, total: 10 })),
     [ctx, heatKeys],
   );
-  const focusRange = useMemo(() => focusTotals(focus, keys), [focus, keys]);
+  const focusRange = useMemo(
+    () =>
+      allActive
+        ? { seconds: allTime!.focusSeconds, sessions: allTime!.focusSessions }
+        : focusTotals(focus, keys),
+    [allActive, allTime, focus, keys],
+  );
   const configured = useMemo(
     () => configuredPositiveWeight(habits, today, weekdayOf),
     [habits, today],
@@ -69,23 +113,24 @@ export function StatsView() {
 
   const taskRows = useMemo(
     () =>
-      tasks
-        .map((t) => {
-          const days = range === "540" ? Object.keys(taskProgress[String(t.id)] ?? {}) : keys;
-          const progress = days.reduce(
-            (a, d) => a + taskProgressFor(taskProgress, t.id, d),
-            0,
-          );
-          // Historical days contribute their snapshot; today contributes live.
-          const earned = days.reduce(
-            (a, d) => a + taskContributionFor(t, t.id, taskProgress, d, today),
-            0,
-          );
-          return { task: t, progress, earned, ratio: ratioFor(t, progress) };
-        })
-        .filter((r) => r.progress > 0 || (r.task.day && keys.includes(r.task.day)))
-        .sort((a, b) => b.ratio - a.ratio),
-    [tasks, taskProgress, keys, range, today],
+      allActive
+        ? allTime!.taskRows
+        : tasks
+            .map((t) => {
+              const progress = keys.reduce(
+                (a, d) => a + taskProgressFor(taskProgress, t.id, d),
+                0,
+              );
+              // Historical days contribute their snapshot; today contributes live.
+              const earned = keys.reduce(
+                (a, d) => a + taskContributionFor(t, t.id, taskProgress, d, today),
+                0,
+              );
+              return { task: t, progress, earned, ratio: ratioFor(t, progress) };
+            })
+            .filter((r) => r.progress > 0 || (r.task.day && keys.includes(r.task.day)))
+            .sort((a, b) => b.ratio - a.ratio),
+    [allActive, allTime, tasks, taskProgress, keys, today],
   );
 
   const negativeHabits = useMemo(() => comparison.filter((c) => c.habit.kind === "negative"), [comparison]);
@@ -118,7 +163,7 @@ export function StatsView() {
         </div>
       ) : null}
 
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-labelledby="overall">
+      <section className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-labelledby="overall">
         <h2 id="overall" className="sr-only">
           Overall statistics
         </h2>
@@ -134,7 +179,7 @@ export function StatsView() {
         />
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <section className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Stat label="7-day average" value={`${formatRating(stats.sevenDayAverage)}/10`} accent="var(--primary)" />
         <Stat label="30-day average" value={`${formatRating(stats.thirtyDayAverage)}/10`} accent="var(--accent)" />
         <Stat label="Current streak" value={`${stats.currentStreak} days`} sub="Consecutive days rated above 0" accent="var(--warn)" />
@@ -142,7 +187,7 @@ export function StatsView() {
         <Stat
           label="Penalties in range"
           value={formatPoints(stats.totalPenalties)}
-          sub={`${formatPoints(configured)} positive weight configured`}
+          sub={allActive ? `across ${stats.daysRated} rated days` : `${formatPoints(configured)} positive weight configured`}
           accent="var(--danger)"
         />
       </section>
@@ -160,7 +205,7 @@ export function StatsView() {
         <LineChart data={series.map((p) => ({ key: p.key, score: p.rating, total: 10 }))} height={240} />
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
+      <section className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
         <div className="card min-w-0 p-5">
           <p className="eyebrow">Weekly average</p>
           <h2 className="mb-3 text-lg font-semibold">Average rating per week (16 weeks)</h2>
@@ -184,7 +229,7 @@ export function StatsView() {
         <Heatmap weeks={buildWeeks(heat)} cellSize={13} />
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-3">
+      <section className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-3">
         <div className="card p-5 lg:col-span-2">
           <p className="eyebrow">Habit consistency</p>
           <h2 className="mb-4 text-lg font-semibold">Target completion by habit</h2>
@@ -267,7 +312,7 @@ export function StatsView() {
         </div>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-2">
+      <section className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
         <div className="card p-5">
           <p className="eyebrow">Task completion</p>
           <h2 className="mb-4 text-lg font-semibold">Reward earned per task</h2>

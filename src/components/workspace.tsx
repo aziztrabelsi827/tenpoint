@@ -6,7 +6,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -36,7 +35,6 @@ import {
   type TaskStatus,
   type WorkspaceDTO,
 } from "@/lib/types";
-import { detectTimezone } from "@/lib/timezone";
 import { useToast } from "@/components/ui";
 
 type NewHabit = {
@@ -159,47 +157,25 @@ export function WorkspaceProvider({
   const [occurrences, setOccurrences] = useState<OccurrenceMap>(initial.occurrences);
   const [taskProgress, setTaskProgressMap] = useState<TaskProgressMap>(initial.taskProgress);
   const [today, setToday] = useState<string>(initial.today);
-  const [timezone, setTimezone] = useState<string>(initial.settings.timezone);
-
-  /**
-   * Correct "today" from the browser on mount. The server renders with the
-   * stored timezone; if the browser reports a different one we adopt it and
-   * persist it. Runs after hydration so server/client markup matches.
-   */
-  const tzSyncedRef = useRef(false);
-  useEffect(() => {
-    if (tzSyncedRef.current) return;
-    tzSyncedRef.current = true;
-    const browserTz = detectTimezone();
-    if (!browserTz || browserTz === initial.settings.timezone) return;
-    // Intentionally synchronised in an effect: the browser timezone is only
-    // readable client-side, and rendering it on the server would cause a
-    // hydration mismatch, so the stored timezone is corrected once after mount.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setTimezone(browserTz);
-    setToday(todayInZone(browserTz));
-    void fetch("/api/settings", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ timezone: browserTz }),
-    }).catch(() => undefined);
-  }, [initial.settings.timezone]);
-
-  // Roll over at local midnight without a reload.
-  useEffect(() => {
-    const check = () => {
-      const next = todayInZone(timezone);
-      setToday((prev) => (prev === next ? prev : next));
-    };
-    check();
-    const id = setInterval(check, 30_000);
-    return () => clearInterval(id);
-  }, [timezone]);
   const [tasks, setTasks] = useState<TaskDTO[]>(initial.tasks);
   const [events, setEvents] = useState<EventDTO[]>(initial.events);
   const [focus, setFocus] = useState<FocusDTO[]>(initial.focus);
   const [settings, setSettings] = useState<SettingsDTO>(initial.settings);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
+
+  // Roll over at local midnight without a reload. "today" follows the user's
+  // explicit Settings choice only — the browser timezone is never adopted (or
+  // persisted) silently on page load. Changing the timezone in Settings below
+  // re-syncs "today" through saveSettings.
+  useEffect(() => {
+    const check = () => {
+      const next = todayInZone(settings.timezone);
+      setToday((prev) => (prev === next ? prev : next));
+    };
+    check();
+    const id = setInterval(check, 30_000);
+    return () => clearInterval(id);
+  }, [settings.timezone]);
 
   const countFor = useCallback(
     (habitId: number, day: string) => logs[String(habitId)]?.[day]?.count ?? 0,
@@ -670,22 +646,21 @@ export function WorkspaceProvider({
 
   const saveSettings = useCallback(
     async (patch: Partial<SettingsDTO>) => {
+      const previous = settings;
       setSettings((prev) => ({ ...prev, ...patch }));
+      // Recompute "today" the moment the effective timezone changes so the
+      // server round-trip never leaves the local calendar date stale.
+      if (patch.timezone) setToday(todayInZone(patch.timezone));
       try {
         await api("/api/settings", "PATCH", patch);
       } catch (err) {
-        // Roll back the optimistic update so state never drifts from the DB.
-        setSettings((prev) => {
-          const next = { ...prev };
-          for (const k of Object.keys(patch) as (keyof SettingsDTO)[]) {
-            delete next[k];
-          }
-          return next;
-        });
+        // Restore the previous settings so state never drifts from the DB.
+        setSettings(previous);
+        if (patch.timezone) setToday(todayInZone(previous.timezone));
         toast.push((err as Error).message, "error");
       }
     },
-    [toast],
+    [settings, toast],
   );
 
   const setTheme = useCallback(
@@ -716,7 +691,7 @@ export function WorkspaceProvider({
       focus,
       settings,
       today,
-      timezone,
+      timezone: settings.timezone,
       busy,
       setHabitCount,
       toggleOccurrence,
@@ -745,7 +720,7 @@ export function WorkspaceProvider({
         .reduce((acc, h) => acc + h.pointValue, 0),
     }),
     [
-      habits, logs, occurrences, taskProgress, tasks, events, focus, settings, today, timezone, busy,
+      habits, logs, occurrences, taskProgress, tasks, events, focus, settings, today, busy,
       setTaskProgress,
       setHabitCount, toggleOccurrence, occurrenceFor, cycleHabit, countFor, isDone, taskProgressFor,
       createHabit, updateHabit, deleteHabit, moveHabit, createTask, updateTask,
