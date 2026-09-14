@@ -37,6 +37,11 @@ const MIN_COL_WIDTH = 96;
 
 /** The calendar grid dominates the viewport; the app shell provides the rest. */
 const GRID_HEIGHT = "calc(100vh - 11rem)";
+/**
+ * Mobile reserves space for the app-shell top bar and the calendar toolbar so
+ * the initial "jump" lands ~07:00 below them instead of underneath.
+ */
+const MOBILE_TOP_OFFSET = 168;
 const SNAP = 15;
 const DAY_START_HOUR = 0;
 const TOTAL_MINUTES = 24 * 60;
@@ -153,6 +158,7 @@ export function CalendarView() {
   }, []);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const headerRowRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState>(null);
   const ghostRef = useRef<{ key: string; day: string; start: number; end: number } | null>(null);
@@ -182,8 +188,22 @@ export function CalendarView() {
     return () => clearTimeout(id);
   }, [today, cursor]);
 
+  // Jump the time grid to ~07:00 when the view or period changes. On lg+ the
+  // panel keeps its own fixed-height scrollport (unchanged behaviour); below lg
+  // the calendar now scrolls with the page, so scroll the window by the same
+  // amount instead of relying on a nested scrollbar.
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = Math.max(0, 7 * HOUR_HEIGHT - HOUR_HEIGHT);
+    const el = scrollRef.current;
+    if (!el) return;
+    const target = Math.max(0, 7 * HOUR_HEIGHT - HOUR_HEIGHT);
+    if (window.matchMedia("(min-width: 1024px)").matches) {
+      // The day header lives inside the scroller, so account for its height to
+      // keep ~07:00 at the same spot it used to occupy.
+      el.scrollTop = target + (headerRowRef.current?.offsetHeight ?? 0);
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    window.scrollTo({ top: window.scrollY + rect.top + target - MOBILE_TOP_OFFSET, behavior: "auto" });
   }, [view]);
 
   useEffect(() => {
@@ -220,6 +240,15 @@ export function CalendarView() {
     if (view === "week") return weekDays;
     return monthGrid;
   }, [view, cursor, weekDays, monthGrid]);
+
+  /**
+   * Single column template shared by the day header, habit lane and time grid so
+   * every row stays pixel-aligned. Each day column keeps a readable minimum
+   * width; on small screens the extra width overflows the container and that
+   * overflow is what the horizontal scroller exposes.
+   */
+  const colTemplate = `${TIME_GUTTER}px repeat(${days.length}, minmax(${MIN_COL_WIDTH}px, 1fr))`;
+  const minGridWidth = TIME_GUTTER + days.length * MIN_COL_WIDTH;
 
   /* ---------------- build the time-grid items ---------------- */
 
