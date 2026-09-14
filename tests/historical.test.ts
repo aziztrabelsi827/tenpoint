@@ -26,10 +26,12 @@ const habit = (over: Partial<HabitDTO> = {}): HabitDTO => ({
   kind: "positive",
   pointValue: 2,
   targetCount: 5,
+  weekdayTargets: [],
   days: [],
   scheduleTimes: [],
   sortOrder: 0,
   enabled: true,
+  archivedAt: null,
   ...over,
 });
 

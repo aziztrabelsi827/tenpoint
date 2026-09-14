@@ -96,10 +96,10 @@ export function hasRecordedProgress(entry: { count: number } | null | undefined)
 /* ------------------------------------------------------------------ */
 
 /** Signed contribution of a habit given an occurrence count, from current config. */
-export function habitContribution(habit: HabitDTO, count: number): number {
+export function habitContribution(habit: HabitDTO, count: number, targetOverride?: number): number {
   if (count <= 0) return 0;
   if (habit.kind === "negative") return -roundPoints(count * habit.pointValue);
-  const target = Math.max(1, habit.targetCount);
+  const target = Math.max(1, targetOverride ?? habit.targetCount);
   return roundPoints(Math.min(1, count / target) * habit.pointValue);
 }
 
@@ -152,6 +152,7 @@ export type HabitDaySnapshot = {
 export function resolveHabitSnapshot(
   habit: Pick<HabitDTO, "pointValue" | "targetCount" | "kind">,
   existingLog: StoredHabitLog | null | undefined,
+  dayTarget?: number,
 ): HabitDaySnapshot {
   const recorded = hasRecordedProgress(existingLog);
 
@@ -178,10 +179,11 @@ export function resolveHabitSnapshot(
 
   // 3. No real record yet (brand-new day OR a provisional zero-progress row):
   //    the current configuration becomes the day's snapshot the moment real
-  //    progress is recorded.
+  //    progress is recorded. `dayTarget` is the per-weekday effective target
+  //    when callers can resolve it for the specific day being written.
   return {
     weight: Number(habit.pointValue),
-    target: Math.max(1, Number(habit.targetCount)),
+    target: Math.max(1, dayTarget ?? Number(habit.targetCount)),
     kind: habit.kind === "negative" ? "negative" : "positive",
     isNewRecord: true,
   };
@@ -299,6 +301,26 @@ export function progressFor(taskProgress: TaskProgressMap, taskId: number, day: 
 export function isScheduled(habit: HabitDTO, dayKey: string, weekdayOf: (k: string) => number): boolean {
   if (!habit.days || habit.days.length === 0) return true;
   return habit.days.includes(weekdayOf(dayKey));
+}
+
+/**
+ * The daily repetition target that applies to a habit on a specific day.
+ *
+ * A per-weekday override (index Sun(0)..Sat(6), matching `weekdayOf`) beats the
+ * habit's global `targetCount` when present. Provided the override targets are
+ * whole numbers 1..20, this never returns 0 — a skipped weekday belongs to the
+ * `days` frequency field, not to a zero target.
+ */
+export function effectiveTargetFor(
+  habit: Pick<HabitDTO, "targetCount" | "weekdayTargets">,
+  dayKey: string,
+  weekdayOf: (k: string) => number,
+): number {
+  const override = habit.weekdayTargets?.[weekdayOf(dayKey)];
+  if (typeof override === "number" && Number.isFinite(override) && override >= 1) {
+    return Math.max(1, Math.round(override));
+  }
+  return Math.max(1, Number(habit.targetCount) || 1);
 }
 
 /* ------------------------------------------------------------------ */
@@ -469,15 +491,23 @@ export function scoreDay(
     const recorded = hasRecordedProgress(entry);
     const scheduled = !!entry || (habit.enabled && isScheduled(habit, day, weekdayOf));
 
+    // The effective target for THIS day: a per-weekday override for unrecorded
+    // days, or the stored snapshot target for recorded days.
+    const dayTarget = effectiveTargetFor(habit, day, weekdayOf);
+
     const count = entry?.count ?? 0;
-    const contribution = recorded ? entry!.points : scheduled ? habitContribution(habit, count) : 0;
+    const contribution = recorded
+      ? entry!.points
+      : scheduled
+        ? habitContribution(habit, count, dayTarget)
+        : 0;
 
     // The recorded kind wins over the habit's current kind.
     const effectiveKind = habitKindFor(habit, ctx.habitLogs, day, ctx.today);
 
     // The recorded target/weight win over the current configuration.
     const snapshotWeight = recorded ? (entry!.pointValueAtRecord ?? habit.pointValue) : habit.pointValue;
-    const snapshotTarget = recorded ? (entry!.targetCountAtRecord ?? habit.targetCount) : habit.targetCount;
+    const snapshotTarget = recorded ? (entry!.targetCountAtRecord ?? habit.targetCount) : dayTarget;
 
     if (scheduled) {
       if (effectiveKind === "negative") {

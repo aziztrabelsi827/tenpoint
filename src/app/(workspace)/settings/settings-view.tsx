@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { Segmented, Stat, useToast } from "@/components/ui";
 import { useWorkspace } from "@/components/workspace";
@@ -20,6 +20,224 @@ const CUSTOM_PRESETS: { label: string; value: CustomThemeInput }[] = [
   { label: "Terracotta", value: { primary: "#c2653f", accent: "#8a9a5b", background: "#faf5ef", card: "#ffffff", radius: 20, mode: "light" } },
   { label: "Slate pro", value: { primary: "#0f766e", accent: "#f59e0b", background: "#f1f5f9", card: "#ffffff", radius: 10, mode: "light" } },
 ];
+
+/** SSR-safe feature detection: false on the server, real value on the client.
+ *  useSyncExternalStore avoids both hydration mismatch and render cascades. */
+function useClientFlag(detect: () => boolean): boolean {
+  return useSyncExternalStore(
+    () => () => {},
+    () => detect(),
+    () => false,
+  );
+}
+
+/** Converts a URL-safe base64 VAPID public key into the Uint8Array the Push
+ *  API's applicationServerKey expects. */
+function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
+  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+  const base64url = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = window.atob(base64url);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+function NotificationsSection() {
+  const toast = useToast();
+  const supported = useClientFlag(
+    () =>
+      typeof window !== "undefined" &&
+      "serviceWorker" in navigator &&
+      "PushManager" in window &&
+      "Notification" in window,
+  );
+  const [state, setState] = useState<{
+    permission: NotificationPermission | undefined;
+    enabled: boolean;
+    configured: boolean;
+    busy: boolean;
+    testSending: boolean;
+  }>({ permission: undefined, enabled: false, configured: true, busy: false, testSending: false });
+
+  useEffect(() => {
+    if (!supported) return;
+
+    let cancelled = false;
+    void fetch("/api/notifications/subscribe")
+      .then((res) => res.json().catch(() => ({})))
+      .then((body) => {
+        if (cancelled) return;
+        setState((s) => ({
+          ...s,
+          permission: "Notification" in window ? Notification.permission : undefined,
+          enabled: Boolean(body?.enabled),
+          configured: Boolean(body?.configured),
+        }));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [supported]);
+
+  async function enable() {
+    if (!supported) return;
+    setState((s) => ({ ...s, busy: true }));
+    try {
+      let permission = state.permission;
+      if (permission !== "granted") {
+        permission = await Notification.requestPermission();
+        if (permission !== "granted") {
+          toast.push("Permission was not granted. Allow notifications in your browser to use reminders.", "error");
+          setState((s) => ({ ...s, permission, busy: false }));
+          return;
+        }
+      }
+
+      const reg = await navigator.serviceWorker.register("/sw.js");
+      await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+        if (!key) {
+          toast.push("Notifications are not configured on this server yet.", "error");
+          setState((s) => ({ ...s, permission, busy: false }));
+          return;
+        }
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(key),
+        });
+      }
+      const json = sub.toJSON();
+      const res = await fetch("/api/notifications/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: sub.endpoint,
+          p256dh: json.keys?.p256dh ?? "",
+          auth: json.keys?.auth ?? "",
+          userAgent: navigator.userAgent,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.push(body?.error || "Could not save this device.", "error");
+        setState((s) => ({ ...s, permission, busy: false }));
+        return;
+      }
+      setState((s) => ({ ...s, permission, enabled: true, busy: false }));
+      toast.push("Reminders enabled — you will be notified 30 minutes before scheduled tasks and events.");
+    } catch {
+      setState((s) => ({ ...s, busy: false }));
+      toast.push("Could not enable notifications. This requires a secure (HTTPS) connection.", "error");
+    }
+  }
+
+  async function disable() {
+    setState((s) => ({ ...s, busy: true }));
+    try {
+      const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+      if (reg) {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) await sub.unsubscribe();
+      }
+      const res = await fetch("/api/notifications/subscribe", { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.push(body?.error || "Could not disable notifications.", "error");
+        setState((s) => ({ ...s, busy: false }));
+        return;
+      }
+      setState((s) => ({ ...s, enabled: false, busy: false }));
+      toast.push("Reminders disabled on every device.");
+    } catch {
+      // Even if the service worker is stuck, make sure the server forgets us.
+      await fetch("/api/notifications/subscribe", { method: "DELETE" });
+      setState((s) => ({ ...s, enabled: false, busy: false }));
+      toast.push("Reminders disabled.");
+    }
+  }
+
+  async function sendTest() {
+    setState((s) => ({ ...s, testSending: true }));
+    try {
+      const res = await fetch("/api/notifications/test", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.push(body?.error || "Could not send a test notification.", "error");
+      } else {
+        toast.push("Test notification sent.");
+      }
+    } catch {
+      toast.push("Could not send a test notification.", "error");
+    } finally {
+      setState((s) => ({ ...s, testSending: false }));
+    }
+  }
+
+  const label = state.enabled ? "Disable reminders" : "Enable reminders";
+
+  return (
+    <section className="card p-5" aria-labelledby="notifications">
+      <h2 id="notifications" className="mb-1 text-xl font-semibold">
+        Notifications
+      </h2>
+      <p className="mb-4 text-sm" style={{ color: "var(--fg-muted)" }}>
+        TenPoint can nudge you 30 minutes before a scheduled task or event — even when the app is closed.
+        A reminder is tied to this device, so enable it on each device you want to hear from.
+      </p>
+
+      {!supported ? (
+        <p className="text-sm" style={{ color: "var(--warn)" }}>
+          This browser does not support push notifications, so reminders are not available here.
+        </p>
+      ) : !state.configured ? (
+        <p className="text-sm" style={{ color: "var(--warn)" }}>
+          Notifications are not configured on this server yet. Ask the operator to set the VAPID keys.
+        </p>
+      ) : state.permission === "denied" ? (
+        <p className="text-sm" style={{ color: "var(--warn)" }}>
+          Notifications are blocked in your browser. Allow this site in its settings (the lock icon next to the
+          address bar) and then try enabling reminders again.
+        </p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={state.busy}
+            onClick={() => void (state.enabled ? disable() : enable())}
+          >
+            {state.busy ? "Working…" : label}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={!state.enabled || state.testSending}
+            onClick={() => void sendTest()}
+          >
+            {state.testSending ? "Sending…" : "Send test notification"}
+          </button>
+          <span
+            className="chip"
+            style={{
+              borderColor: state.enabled ? "var(--positive)" : "var(--line)",
+              color: state.enabled ? "var(--positive)" : "var(--fg-muted)",
+            }}
+          >
+            {state.enabled ? "On" : "Off"}
+          </span>
+        </div>
+      )}
+
+      <p className="mt-4 text-sm" style={{ color: "var(--fg-muted)" }}>
+        Reminders can be delayed when the device is offline or the browser is closed; the push service then
+        delivers them when it next can. Your timezone (above) decides what “30 minutes before” means.
+      </p>
+    </section>
+  );
+}
 
 export function SettingsView({ userName }: { userName: string }) {
   const {
@@ -371,6 +589,8 @@ export function SettingsView({ userName }: { userName: string }) {
           <strong>{timezoneLabel(settings.timezone)}</strong>
         </p>
       </section>
+
+      <NotificationsSection />
 
       <section className="card p-5" aria-labelledby="timer-defaults">
         <h2 id="timer-defaults" className="mb-1 text-xl font-semibold">

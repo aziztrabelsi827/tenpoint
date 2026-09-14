@@ -3,6 +3,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUserContext } from "@/lib/auth";
 import { MAX_HABITS, slugify } from "@/lib/data";
 import { sanitizePointValue } from "@/lib/format";
+import {
+  normaliseWeekdayTargets,
+  parseWeekdayTargets,
+  serialiseWeekdayTargets,
+  weekdayEffectiveTargets,
+} from "@/lib/weekday-targets";
 import type { HabitDTO } from "@/lib/types";
 
 type HabitRow = {
@@ -15,10 +21,12 @@ type HabitRow = {
   kind: string;
   pointValue: number;
   targetCount: number;
+  weekdayTargets: string;
   days: string;
   scheduleTimes: string;
   sortOrder: number;
   enabled: boolean;
+  archivedAt: string | null;
 };
 
 type HabitPayload = {
@@ -30,6 +38,7 @@ type HabitPayload = {
   kind?: string;
   pointValue?: number;
   targetCount?: number;
+  weekdayTargets?: (number | null)[];
   days?: number[];
   scheduleTimes?: string[];
   enabled?: boolean;
@@ -41,6 +50,18 @@ function safeTimes(raw: string): string[] {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
       return parsed.filter((t): t is string => typeof t === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t));
+    }
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+function safeDays(raw: string): number[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((n): n is number => typeof n === "number" && n >= 0 && n <= 6);
     }
   } catch {
     /* ignore */
@@ -66,10 +87,12 @@ function serialise(row: HabitRow): HabitDTO {
     kind: row.kind === "negative" ? "negative" : "positive",
     pointValue: Number(row.pointValue ?? 1),
     targetCount: Math.max(1, Number(row.targetCount ?? 1)),
+    weekdayTargets: parseWeekdayTargets(row.weekdayTargets),
     days,
     scheduleTimes: safeTimes(row.scheduleTimes),
     sortOrder: row.sortOrder,
     enabled: row.enabled,
+    archivedAt: row.archivedAt ?? null,
   };
 }
 
@@ -84,10 +107,12 @@ function mapHabitRow(r: Record<string, unknown>): HabitRow {
     kind: String(r.kind ?? "positive"),
     pointValue: Number(r.point_value ?? 1),
     targetCount: Number(r.target_count ?? 1),
+    weekdayTargets: String(r.weekday_targets ?? "[]"),
     days: String(r.days ?? "[]"),
     scheduleTimes: String(r.schedule_times ?? "[]"),
     sortOrder: Number(r.sort_order ?? 0),
     enabled: Boolean(r.enabled),
+    archivedAt: r.archived_at != null ? String(r.archived_at) : null,
   };
 }
 
@@ -129,11 +154,14 @@ export async function POST(request: Request) {
     kind === "negative"
       ? 1
       : Math.max(1, Math.min(20, Math.round(Number(body.targetCount ?? 1) || 1)));
+  const weekdayTargets =
+    kind === "negative" ? null : normaliseWeekdayTargets(body.weekdayTargets);
 
   const countResult = await supabase
     .from("habits")
     .select("id", { count: "exact", head: true })
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .is("archived_at", null);
   if (countResult.error) return NextResponse.json({ error: "Could not create the habit." }, { status: 500 });
   if ((countResult.count ?? 0) >= MAX_HABITS) {
     return NextResponse.json(
@@ -150,15 +178,22 @@ export async function POST(request: Request) {
     .limit(1);
   const maxOrderVal = maxOrder.data?.[0]?.sort_order;
 
-  // Creation guard: scheduleTimes must not exceed targetCount (positive habits).
+  // Creation guard: scheduleTimes must never exceed the SMALLEST daily target
+  // on an active weekday — every scheduled time fires on every scheduled day,
+  // so the cap is the weekday that asks for the fewest repetitions.
   if (kind !== "negative" && Array.isArray(body.scheduleTimes)) {
     const times = [...new Set(body.scheduleTimes)].filter((t) =>
       /^([01]\d|2[0-3]):[0-5]\d$/.test(t),
     );
-    if (times.length > targetCount) {
+    const activeDays = Array.isArray(body.days) && body.days.length > 0 ? body.days : [0, 1, 2, 3, 4, 5, 6];
+    const effective = weekdayEffectiveTargets(targetCount, weekdayTargets ?? []);
+    const minDaily = Math.min(...activeDays.map((wd) => effective[Math.max(0, Math.min(6, wd))]));
+    if (times.length > minDaily) {
       return NextResponse.json(
         {
-          error: `${times.length} scheduled times exceed the target of ${targetCount} repetitions per day.`,
+          error: `${times.length} scheduled times exceed the lowest daily target of ${minDaily} repetitions (your ${minDaily}-repetition days). Remove ${
+            times.length - minDaily
+          } time${times.length - minDaily === 1 ? "" : "s"} or raise that day's target.`,
         },
         { status: 400 },
       );
@@ -178,6 +213,7 @@ export async function POST(request: Request) {
       kind,
       point_value: pointValue,
       target_count: targetCount,
+      weekday_targets: serialiseWeekdayTargets(weekdayTargets ?? undefined),
       days: JSON.stringify((body.days ?? []).filter((d) => d >= 0 && d <= 6)),
       schedule_times: JSON.stringify(
         [...new Set(body.scheduleTimes ?? [])]
@@ -224,25 +260,33 @@ export async function PATCH(request: Request) {
   if (typeof body.color === "string") patch.color = body.color.slice(0, 24);
   if (typeof body.description === "string") patch.description = body.description.slice(0, 400);
   if (Array.isArray(body.days)) patch.days = JSON.stringify(body.days.filter((d) => d >= 0 && d <= 6));
+  if (Array.isArray(body.weekdayTargets)) patch.weekday_targets = serialiseWeekdayTargets(body.weekdayTargets);
   if (Array.isArray(body.scheduleTimes)) {
     // Validate HH:MM, dedupe, cap at 24.
     const times = [...new Set(body.scheduleTimes)]
       .filter((t) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t))
       .sort();
 
-    // A positive habit may not have MORE scheduled times than its daily target.
-    // Fewer is fine — some repetitions can be unscheduled.
+    // A positive habit may not have MORE scheduled times than the SMALLEST
+    // effective daily target across all active weekdays.
+    const nextDays = patch.days !== undefined ? safeDays(String(patch.days)) : safeDays(cur.days);
+    const nextWt = patch.weekday_targets !== undefined ? parseWeekdayTargets(String(patch.weekday_targets)) : parseWeekdayTargets(cur.weekdayTargets);
     const nextTarget = patch.target_count !== undefined ? Number(patch.target_count) : Math.max(1, Number(cur.targetCount ?? 1));
     const nextKind = patch.kind !== undefined ? String(patch.kind) : cur.kind;
-    if (nextKind !== "negative" && times.length > nextTarget) {
-      return NextResponse.json(
-        {
-          error: `${times.length} scheduled times exceed the target of ${nextTarget} repetitions per day. Remove ${
-            times.length - nextTarget
-          } time${times.length - nextTarget === 1 ? "" : "s"} or raise the target.`,
-        },
-        { status: 400 },
-      );
+    if (nextKind !== "negative" && times.length > 0) {
+      const activeDays = nextDays.length > 0 ? nextDays : [0, 1, 2, 3, 4, 5, 6];
+      const effective = weekdayEffectiveTargets(nextTarget, nextWt);
+      const minDaily = Math.min(...activeDays.map((wd) => effective[Math.max(0, Math.min(6, wd))]));
+      if (times.length > minDaily) {
+        return NextResponse.json(
+          {
+            error: `${times.length} scheduled times exceed the lowest daily target of ${minDaily} repetitions (your ${minDaily}-repetition days). Remove ${
+              times.length - minDaily
+            } time${times.length - minDaily === 1 ? "" : "s"} or raise that day's target.`,
+          },
+          { status: 400 },
+        );
+      }
     }
     patch.schedule_times = JSON.stringify(times);
   }
@@ -296,9 +340,10 @@ export async function PATCH(request: Request) {
  * (habit logs or occurrence records), deleting it would cascade-remove that
  * history and silently rewrite every past daily rating it contributed to.
  *
- * Habits with history are therefore ARCHIVED (disabled + renamed) so their
- * records stay intact and historical statistics remain valid. Only habits with
- * no recorded history are permanently removed.
+ * Habits with history are therefore ARCHIVED (marked archived_at, disabled,
+ * detached from the calendar) so their records stay intact and historical
+ * statistics remain valid. Only habits with no recorded history are
+ * permanently removed.
  *
  * Set `force: true` to delete permanently even when history exists. The UI
  * confirms explicitly before doing this.
@@ -341,13 +386,21 @@ export async function DELETE(request: Request) {
     (logCount.count ?? 0) > 0 || (occCount.count ?? 0) > 0;
 
   if (hasHistory && body.force !== true) {
-    // Archive: keep every historical record, stop future scheduling.
-    const archivedName = `${h.name} (archived)`.slice(0, 60);
+    // Archive: remove from the current workspace but keep every historical
+    // record. The row stays (marked archived_at) so past ratings, snapshots and
+    // analytics keep resolving; callers that do NOT want archived habits filter
+    // on archived_at IS NOT NULL.
+    const archivedRow: HabitRow = {
+      ...h,
+      enabled: false,
+      scheduleTimes: "[]",
+      archivedAt: new Date().toISOString(),
+    };
     const { error: archiveError } = await supabase
       .from("habits")
       .update({
         enabled: false,
-        name: archivedName,
+        archived_at: archivedRow.archivedAt,
         // Detach from the calendar so archived occurrences stop rendering.
         schedule_times: "[]",
       })
@@ -358,7 +411,8 @@ export async function DELETE(request: Request) {
     return NextResponse.json({
       ok: true,
       archived: true,
-      message: `“${h.name}” has ${logCount.count ?? 0} recorded day(s). It was archived instead of deleted so your history stays accurate. Pass force: true to delete permanently.`,
+      habit: serialise(archivedRow),
+      message: `“${h.name}” was archived and removed from your workspace. Historical records stay available for past statistics.`,
     });
   }
 

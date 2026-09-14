@@ -8,6 +8,7 @@ import { EmptyState, ProgressBar, Segmented, Stat } from "@/components/ui";
 import { useWorkspace } from "@/components/workspace";
 import { addDays, formatMedium, monthLabel, rangeKeys, weekdayOf } from "@/lib/dates";
 import { formatPercent, formatPoints, formatRating, ratio } from "@/lib/format";
+import { effectiveTargetFor } from "@/lib/scoring";
 import {
   habitContributionFor,
   habitStats,
@@ -23,8 +24,8 @@ type RangeId = "week" | "month" | "year" | "all";
 const RANGE_DAYS: Record<RangeId, number> = { week: 7, month: 30, year: 365, all: 540 };
 
 export function HabitDetailView({ slug }: { slug: string }) {
-  const { habits, logs, tasks, taskProgress, today, setHabitCount } = useWorkspace();
-  const habit = habits.find((h) => h.slug === slug);
+  const { habits, allHabits, logs, tasks, taskProgress, today, setHabitCount } = useWorkspace();
+  const habit = allHabits.find((h) => h.slug === slug);
   const [range, setRange] = useState<RangeId>("month");
   const [editing, setEditing] = useState(false);
 
@@ -38,8 +39,8 @@ export function HabitDetailView({ slug }: { slug: string }) {
   );
 
   const ctx: ScoringContext = useMemo(
-    () => ({ habits, habitLogs: logs, tasks, taskProgress, today }),
-    [habits, logs, tasks, taskProgress, today],
+    () => ({ habits: allHabits, habitLogs: logs, tasks, taskProgress, today }),
+    [allHabits, logs, tasks, taskProgress, today],
   );
 
   const rangeKeysList = useMemo(
@@ -54,7 +55,7 @@ export function HabitDetailView({ slug }: { slug: string }) {
       habit
         ? yearKeys.map((key) => ({
             key,
-            score: Math.min(1, (dayCounts[key]?.count ?? 0) / Math.max(1, habit.targetCount)),
+            score: Math.min(1, (dayCounts[key]?.count ?? 0) / effectiveTargetFor(habit, key, weekdayOf)),
             total: 1,
           }))
         : [],
@@ -122,13 +123,14 @@ export function HabitDetailView({ slug }: { slug: string }) {
   }
 
   const todayCount = dayCounts[today]?.count ?? 0;
-  const target = Math.max(1, habit.targetCount);
+  const target = effectiveTargetFor(habit, today, weekdayOf);
   const todayShare = habit.kind === "negative" ? 0 : Math.min(1, todayCount / target);
   const isNegative = habit.kind === "negative";
-  const scheduledToday = isScheduled(habit, today, weekdayOf);
+  const isArchived = habit.archivedAt !== null;
+  const scheduledToday = !isArchived && isScheduled(habit, today, weekdayOf);
 
   const monthOccurrences = monthKeys.reduce((a, k) => a + (dayCounts[k]?.count ?? 0), 0);
-  const monthTarget = habit.kind === "negative" ? 0 : monthKeys.length * target;
+  const monthTarget = habit.kind === "negative" ? 0 : monthKeys.reduce((a, k) => a + effectiveTargetFor(habit, k, weekdayOf), 0);
 
   return (
     <div className="flex flex-col gap-6">
@@ -177,6 +179,11 @@ export function HabitDetailView({ slug }: { slug: string }) {
                 {habit.days.length === 0 ? "Every day" : `${habit.days.length}× / week`}
               </span>
               {!isNegative ? <span className="chip num">{target}× per day</span> : null}
+              {isArchived ? (
+                <span className="chip" style={{ borderColor: "var(--fg-subtle)", color: "var(--fg-subtle)" }}>
+                  archived — history preserved
+                </span>
+              ) : null}
             </div>
           </div>
         </div>
@@ -190,13 +197,20 @@ export function HabitDetailView({ slug }: { slug: string }) {
             thickness={12}
             color={isNegative ? "var(--danger)" : habit.color}
           />
-          <button type="button" className="btn" onClick={() => setEditing(true)}>
-            Edit habit
-          </button>
+          {!isArchived ? (
+            <button type="button" className="btn" onClick={() => setEditing(true)}>
+              Edit habit
+            </button>
+          ) : null}
         </div>
       </header>
 
-      {scheduledToday ? (
+      {isArchived ? (
+        <p className="text-sm" style={{ color: "var(--fg-muted)" }}>
+          This habit was removed from your workspace. Its historical records remain
+          available here for past statistics.
+        </p>
+      ) : scheduledToday ? (
         <section className="card p-5" aria-label="Record today">
           <p className="eyebrow">Today</p>
           <h2 className="mb-3 text-lg font-semibold">
@@ -325,7 +339,7 @@ export function HabitDetailView({ slug }: { slug: string }) {
           <h2 className="mb-3 text-lg font-semibold">Last 28 days</h2>
           <StreakStrip
             keys={streakStrip}
-            done={new Set(streakStrip.filter((k) => (dayCounts[k]?.count ?? 0) >= target))}
+            done={new Set(streakStrip.filter((k) => (dayCounts[k]?.count ?? 0) >= effectiveTargetFor(habit, k, weekdayOf)))}
             color={habit.color}
           />
           <dl className="mt-4 grid grid-cols-2 gap-2">

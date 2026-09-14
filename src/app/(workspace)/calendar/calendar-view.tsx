@@ -26,6 +26,7 @@ import {
 import { dayKeyInZone, minutesInZone, timezoneLabel } from "@/lib/timezone";
 import { formatPoints, formatRating, minutesToTime, timeToMinutes } from "@/lib/format";
 import { countFor, isScheduled, taskContributionFor, taskProgressFor } from "@/lib/stats";
+import { effectiveTargetFor } from "@/lib/scoring";
 import { formatTaskProgressOverTarget } from "@/lib/tasks";
 import type { EventDTO, HabitDTO, HabitLogMap, TaskDTO, TaskProgressMap } from "@/lib/types";
 
@@ -316,7 +317,7 @@ export function CalendarView() {
         const done = countFor(logs, habit.id, d);
         const logEntry = logs[String(habit.id)]?.[d];
         // The recorded target wins over the current configuration.
-        const target = Math.max(1, logEntry?.targetCountAtRecord ?? habit.targetCount);
+        const target = Math.max(1, logEntry?.targetCountAtRecord ?? effectiveTargetFor(habit, d, weekdayOf));
 
         if (dayOccurrences && Object.keys(dayOccurrences).length > 0) {
           // Occurrence-level records exist: render from the RECORDS.
@@ -1030,7 +1031,7 @@ export function CalendarView() {
                   {days.map((d) => {
                     const list = scheduledHabits(d);
                     const met = list.filter(
-                      (h) => countFor(logs, h.id, d) >= Math.max(1, h.targetCount),
+                      (h) => countFor(logs, h.id, d) >= effectiveTargetFor(h, d, weekdayOf),
                     ).length;
                     return (
                       <div key={d} className="border-r p-1.5 last:border-r-0" style={{ borderColor: "var(--grid-line)" }}>
@@ -1043,7 +1044,7 @@ export function CalendarView() {
                         <div className="flex flex-wrap gap-1">
                           {list.map((h) => {
                             const count = countFor(logs, h.id, d);
-                            const target = Math.max(1, h.targetCount);
+                            const target = effectiveTargetFor(h, d, weekdayOf);
                             const full = count >= target;
                             return (
                               <button

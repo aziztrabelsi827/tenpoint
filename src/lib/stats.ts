@@ -22,6 +22,7 @@ import type { TaskDTO } from "@/lib/types";
 import {
   configuredPositiveWeight,
   countFor,
+  effectiveTargetFor,
   habitDayCounts,
   habitContribution,
   habitContributionFor,
@@ -36,13 +37,14 @@ import {
 } from "@/lib/scoring";
 
 export {
+  configuredPositiveWeight,
   countFor,
+  effectiveTargetFor,
   habitDayCounts,
   habitContribution,
   habitContributionFor,
   habitKindFor,
   isScheduled,
-  configuredPositiveWeight,
   perOccurrenceValue,
   taskContributionFor,
   taskProgressFor,
@@ -79,7 +81,6 @@ export function habitStats(
   sinceKey?: string,
 ): HabitStats {
   const dayCounts = habitDayCounts(logs, habit.id);
-  const target = Math.max(1, habit.targetCount);
 
   const start = sinceKey ?? habitStart(dayCounts, today);
   const keys = rangeKeys(start, today);
@@ -102,7 +103,7 @@ export function habitStats(
     const dayScheduled = !!entry || isScheduled(habit, key, weekdayOf);
     if (!dayScheduled) continue;
     // The recorded target wins over the current configuration.
-    const dayTarget = entry?.targetCountAtRecord ?? target;
+    const dayTarget = entry?.targetCountAtRecord ?? effectiveTargetFor(habit, key, weekdayOf);
     const done = dayCounts[key] ?? 0;
     // Historical days use the recorded kind; today uses live configuration.
     const dayKind = habitKindFor(habit, logs, key, today);
@@ -135,7 +136,7 @@ export function habitStats(
   // Current streak: consecutive scheduled days meeting the target.
   let currentStreak = 0;
   let cursor = today;
-  if ((dayCounts[today] ?? 0) < target) cursor = addDays(today, -1);
+  if ((dayCounts[today] ?? 0) < effectiveTargetFor(habit, today, weekdayOf)) cursor = addDays(today, -1);
   let guard = 0;
   while (guard < 2000) {
     if (diffDays(cursor, start) < 0) break;
@@ -145,7 +146,7 @@ export function habitStats(
       continue;
     }
     const streakEntry = logs[String(habit.id)]?.[cursor];
-    const streakTarget = Math.max(1, streakEntry?.targetCountAtRecord ?? target);
+    const streakTarget = Math.max(1, streakEntry?.targetCountAtRecord ?? effectiveTargetFor(habit, cursor, weekdayOf));
     if ((dayCounts[cursor] ?? 0) >= streakTarget) {
       currentStreak += 1;
       cursor = addDays(cursor, -1);
@@ -167,7 +168,9 @@ export function habitStats(
       const e = logs[String(habit.id)]?.[k];
       if (!e && !isScheduled(habit, k, weekdayOf)) continue;
       o += dayCounts[k] ?? 0;
-      t += habitKindFor(habit, logs, k, today) === "negative" ? 0 : (e?.targetCountAtRecord ?? target);
+      t += habitKindFor(habit, logs, k, today) === "negative"
+        ? 0
+        : (e?.targetCountAtRecord ?? effectiveTargetFor(habit, k, weekdayOf));
     }
     return { occurrences: o, target: t };
   };
@@ -406,7 +409,6 @@ export function habitComparison(
     .map((habit) => {
       let occurrences = 0;
       let target = 0;
-      const configuredTarget = Math.max(1, habit.targetCount);
       for (const key of keys) {
         const entry = ctx.habitLogs[String(habit.id)]?.[key];
         // A recorded log means the habit participated that day regardless of
@@ -416,7 +418,7 @@ export function habitComparison(
         // historical rates stay frozen when a habit's type or repetitions
         // change — same snapshot rule habitStats/scoreDay apply.
         const dayKind = habitKindFor(habit, ctx.habitLogs, key, ctx.today);
-        const dayTarget = entry?.targetCountAtRecord ?? configuredTarget;
+        const dayTarget = entry?.targetCountAtRecord ?? effectiveTargetFor(habit, key, weekdayOf);
         occurrences += countFor(ctx.habitLogs, habit.id, key);
         target += dayKind === "negative" ? 0 : Math.max(1, dayTarget);
       }

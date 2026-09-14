@@ -19,6 +19,7 @@ import {
 import {
   configuredPositiveWeight,
   countFor,
+  effectiveTargetFor,
   focusTotals,
   habitContributionFor,
   isScheduled,
@@ -87,14 +88,14 @@ type RemainingItem = {
 
 export function DashboardView({ userName, greeting }: { userName: string; greeting: string }) {
   const {
-    habits, logs, tasks, events, focus, taskProgress, occurrences, busy,
+    habits, allHabits, logs, tasks, events, focus, taskProgress, occurrences, busy,
     setHabitCount, setTaskProgress, today, timezone,
   } = useWorkspace();
   void occurrences;
 
   const ctx: ScoringContext = useMemo(
-    () => ({ habits, habitLogs: logs, tasks, taskProgress, today }),
-    [habits, logs, tasks, taskProgress, today],
+    () => ({ habits: allHabits, habitLogs: logs, tasks, taskProgress, today }),
+    [allHabits, logs, tasks, taskProgress, today],
   );
 
   const rating = useMemo(() => scoreDay(ctx, today, weekdayOf), [ctx, today]);
@@ -112,7 +113,7 @@ export function DashboardView({ userName, greeting }: { userName: string; greeti
       const logEntry = logs[String(habit.id)]?.[today];
       const participated = !!logEntry;
       if (!participated && (!habit.enabled || !isScheduled(habit, today, weekdayOf))) continue;
-      const target = Math.max(1, logEntry?.targetCountAtRecord ?? habit.targetCount);
+      const target = Math.max(1, logEntry?.targetCountAtRecord ?? effectiveTargetFor(habit, today, weekdayOf));
       const count = countFor(logs, habit.id, today);
       const earned = habitContributionFor(habit, logs, today, today);
       const negative = habit.kind === "negative";

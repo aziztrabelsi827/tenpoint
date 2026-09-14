@@ -3,6 +3,7 @@ import { getSupabaseServerClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { addDays } from "@/lib/dates";
 import { normaliseTimezone, todayInZone } from "@/lib/timezone";
+import { parseWeekdayTargets } from "@/lib/weekday-targets";
 import type {
   EventDTO,
   FocusDTO,
@@ -161,10 +162,12 @@ export type HabitRow = {
   kind: string;
   point_value: number;
   target_count: number;
+  weekday_targets: string;
   days: string;
   schedule_times: string;
   sort_order: number;
   enabled: boolean;
+  archived_at: string | null;
 };
 
 export function habitDTO(h: HabitRow): HabitDTO {
@@ -178,10 +181,12 @@ export function habitDTO(h: HabitRow): HabitDTO {
     kind: h.kind === "negative" ? "negative" : "positive",
     pointValue: Number(h.point_value ?? 1),
     targetCount: Math.max(1, Number(h.target_count ?? 1)),
+    weekdayTargets: parseWeekdayTargets(h.weekday_targets),
     days: safeDays(h.days),
     scheduleTimes: safeTimes(h.schedule_times),
     sortOrder: h.sort_order,
     enabled: h.enabled,
+    archivedAt: h.archived_at ?? null,
   };
 }
 
@@ -260,6 +265,8 @@ type FocusRow = {
   task_id: number | null;
   day: string;
   started_at: string | null;
+  ends_at: string | null;
+  remaining_seconds: number | null;
 };
 
 function focusDTO(f: FocusRow): FocusDTO {
@@ -272,6 +279,8 @@ function focusDTO(f: FocusRow): FocusDTO {
     taskId: f.task_id,
     day: f.day,
     startedAt: f.started_at ? new Date(f.started_at).toISOString() : null,
+    endsAt: f.ends_at ? new Date(f.ends_at).toISOString() : null,
+    remainingSeconds: f.remaining_seconds,
   };
 }
 
@@ -446,8 +455,13 @@ export async function loadWorkspace(_userIdHint?: string): Promise<WorkspaceDTO>
 
   const taskProgress = taskProgressLogMap((progressRes.data ?? []) as TaskProgressLogRow[]);
 
+  const allHabits = (habitRes.data ?? []).map((h: any) => habitDTO(h as HabitRow));
+  const habits = allHabits.filter((h) => h.archivedAt === null);
+  const archivedHabits = allHabits.filter((h) => h.archivedAt !== null);
+
   return {
-    habits: (habitRes.data ?? []).map((h: any) => habitDTO(h as HabitRow)),
+    habits,
+    archivedHabits,
     logs,
     occurrences,
     tasks: (taskRes.data ?? []).map((t: any) => taskDTO(t as TaskRow)),

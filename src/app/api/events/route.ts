@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUserContext } from "@/lib/auth";
+import { cancelReminderFor, scheduleReminderFor } from "@/lib/reminders";
+import { normaliseTimezone } from "@/lib/timezone";
 import type { EventDTO } from "@/lib/types";
 
 const KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -30,6 +33,16 @@ function serialise(row: EventRow): EventDTO {
     location: row.location,
     color: row.color,
   };
+}
+
+/** Server-side resolution of the user's IANA timezone via Supabase. */
+async function userTimezoneFor(userId: string, supabase: SupabaseClient) {
+  const { data } = await supabase
+    .from("user_settings")
+    .select("timezone")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return normaliseTimezone(data?.timezone);
 }
 
 export async function POST(request: Request) {
@@ -80,7 +93,20 @@ export async function POST(request: Request) {
     .single();
 
   if (error) return NextResponse.json({ error: "Could not create the event." }, { status: 500 });
-  return NextResponse.json({ event: serialise(data as EventRow) });
+
+  const event = serialise(data as EventRow);
+  const timezone = await userTimezoneFor(userId, supabase);
+  await scheduleReminderFor(
+    supabase,
+    userId,
+    "event",
+    event.id,
+    event.title,
+    event.day,
+    event.startTime,
+    timezone,
+  );
+  return NextResponse.json({ event });
 }
 
 export async function PATCH(request: Request) {
@@ -147,7 +173,21 @@ export async function PATCH(request: Request) {
     .select("*")
     .single();
   if (error) return NextResponse.json({ error: "Event not found" }, { status: 404 });
-  return NextResponse.json({ event: serialise(data as EventRow) });
+
+  const event = serialise(data as EventRow);
+  // A move or resize replaces the pending reminder to match the new schedule.
+  const timezone = await userTimezoneFor(userId, supabase);
+  await scheduleReminderFor(
+    supabase,
+    userId,
+    "event",
+    event.id,
+    event.title,
+    event.day,
+    event.startTime,
+    timezone,
+  );
+  return NextResponse.json({ event });
 }
 
 export async function DELETE(request: Request) {
@@ -163,6 +203,7 @@ export async function DELETE(request: Request) {
     .eq("id", body.id)
     .eq("user_id", userId);
   if (error) return NextResponse.json({ error: "Could not delete the event." }, { status: 500 });
+  await cancelReminderFor(supabase, userId, "event", body.id);
   return NextResponse.json({ ok: true });
 }
 

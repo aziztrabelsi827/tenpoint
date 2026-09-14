@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireUserContext } from "@/lib/auth";
+import { weekdayOf } from "@/lib/dates";
+import { parseWeekdayTargets } from "@/lib/weekday-targets";
+import { effectiveTargetFor } from "@/lib/scoring";
 
 const KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -59,7 +62,7 @@ export async function POST(request: Request) {
   // ---- 2. Ownership + configuration ----
   const { data: habit, error: habitError } = await supabase
     .from("habits")
-    .select("id, schedule_times, target_count, kind, point_value, name")
+    .select("id, schedule_times, target_count, weekday_targets, kind, point_value, name")
     .eq("id", habitId)
     .eq("user_id", userId)
     .single();
@@ -67,7 +70,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Habit not found." }, { status: 404 });
 
   const scheduleTimes = safeTimes(habit.schedule_times ?? "");
-  const targetCount = Math.max(1, Number(habit.target_count ?? 1));
+  // When a habit has no calendar times, the day's occurrence index is bounded by
+  // that day's EFFECTIVE target (per-weekday override or the global target), so
+  // an index can never exceed what the habit asks for on this weekday.
+  const targetCount = effectiveTargetFor(
+    {
+      targetCount: Math.max(1, Number(habit.target_count ?? 1)),
+      weekdayTargets: parseWeekdayTargets(habit.weekday_targets),
+    },
+    day,
+    weekdayOf,
+  );
 
   // ---- 3. Occurrence-index validation ----
   /**

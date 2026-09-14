@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireUserContext } from "@/lib/auth";
+import { weekdayOf } from "@/lib/dates";
+import { parseWeekdayTargets } from "@/lib/weekday-targets";
 import {
   calculateHabitPointsFromSnapshot,
+  effectiveTargetFor,
   resolveHabitSnapshot,
   type StoredHabitLog,
 } from "@/lib/scoring";
@@ -40,7 +43,7 @@ export async function POST(request: Request) {
 
   const { data: habit, error: habitReadError } = await supabase
     .from("habits")
-    .select("id, point_value, target_count, kind")
+    .select("id, point_value, target_count, weekday_targets, kind")
     .eq("id", habitId)
     .eq("user_id", userId)
     .single();
@@ -68,7 +71,18 @@ export async function POST(request: Request) {
       }
     : null;
 
-  // Resolve the configuration that applies to THIS day.
+  // Resolve the configuration that applies to THIS day. `dayTarget` is the
+  // per-weekday effective target, so a brand-new (or provisional) record
+  // captures the target that actually applies on this weekday rather than the
+  // habit's global target_count.
+  const dayTarget = effectiveTargetFor(
+    {
+      targetCount: Math.max(1, Number(habit.target_count ?? 1)),
+      weekdayTargets: parseWeekdayTargets(habit.weekday_targets),
+    },
+    day,
+    weekdayOf,
+  );
   const snap = resolveHabitSnapshot(
     {
       pointValue: Number(habit.point_value ?? 1),
@@ -76,6 +90,7 @@ export async function POST(request: Request) {
       kind: habit.kind === "negative" ? "negative" : "positive",
     },
     stored,
+    dayTarget,
   );
 
   /**

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireUserContext } from "@/lib/auth";
-import { upsertTaskProgress } from "@/lib/task-progress";
+import { applyFocusToTask } from "@/lib/focus-progress";
 import { dayKeyInZone, normaliseTimezone } from "@/lib/timezone";
-import type { FocusDTO, TaskStatus } from "@/lib/types";
+import type { FocusDTO } from "@/lib/types";
 
 const MODES = ["focus", "short_break", "long_break"];
 
@@ -15,6 +15,8 @@ type FocusRow = {
   task_id: number | null;
   day: string;
   started_at: string | null;
+  ends_at: string | null;
+  remaining_seconds: number | null;
 };
 
 /**
@@ -125,71 +127,21 @@ export async function POST(request: Request) {
     taskId: fRow.task_id,
     day: fRow.day,
     startedAt: fRow.started_at,
+    endsAt: fRow.ends_at,
+    remainingSeconds: fRow.remaining_seconds,
   };
 
   // Timer -> time-measured task progress, on the same local day.
-  let progressResult: { progress: number; points: number } | null = null;
-  const taskId = taskLink ?? 0;
-  if (mode === "focus" && Number.isFinite(taskId) && taskId > 0) {
-    const { data: task, error: taskReadError } = await supabase
-      .from("tasks")
-      .select("id, status, measure_type, target_value, max_points")
-      .eq("id", taskId)
-      .eq("user_id", userId)
-      .single();
-    if (taskReadError) {
-      // The session itself saved fine; a task read failure isn't fatal to it.
-      return NextResponse.json({ session, progress: null });
-    }
-    if (task && task.measure_type === "time") {
-      const minutes = Math.max(1, Math.round(seconds / 60));
-
-      // Task progress is written to the SAME locally-derived day as the session,
-      // so the rating and the calendar can never disagree about which day a
-      // focus session belongs to. The shared snapshot-aware upsert adds the
-      // minutes and computes points from the stored snapshot (or captures the
-      // current config for a brand-new day) — it never re-derives an existing
-      // day's points from a changed task configuration.
-      let result: { progress: number; points: number };
-      try {
-        result = await upsertTaskProgress(
-          supabase,
-          userId,
-          taskId,
-          day,
-          minutes,
-          {
-            measureType: "time",
-            targetValue: Number(task.target_value),
-            unit: "",
-            maxPoints: Number(task.max_points),
-            status: task.status as TaskStatus,
-          },
-          { additive: true },
-        );
-      } catch (err) {
-        return NextResponse.json(
-          { error: err instanceof Error ? err.message : "Could not write task progress." },
-          { status: 500 },
-        );
-      }
-
-      const { error: statusUpdateError } = await supabase
-        .from("tasks")
-        .update({ status: task.status === "todo" ? "in_progress" : task.status })
-        .eq("id", taskId)
-        .eq("user_id", userId);
-      if (statusUpdateError) {
-        // Secondary best-effort status flip; not fatal to the saved session.
-        progressResult = { progress: result.progress, points: result.points };
-        return NextResponse.json({ session, progress: progressResult });
-      }
-
-      progressResult = { progress: result.progress, points: result.points };
-    }
+  try {
+    const progress = await applyFocusToTask(supabase, userId, taskLink, mode, seconds, day);
+    return NextResponse.json({ session, progress });
+  } catch (err) {
+    // The session itself saved fine; a task write failure isn't fatal to it.
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Could not write task progress." },
+      { status: 500 },
+    );
   }
-
-  return NextResponse.json({ session, progress: progressResult });
 }
 
 export const dynamic = "force-dynamic";

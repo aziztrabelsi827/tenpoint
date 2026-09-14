@@ -12,8 +12,10 @@ import {
 import { slugify } from "@/lib/slug";
 import { buildCustomTokens, cssVarMap, type CustomThemeInput, type ThemeId } from "@/lib/themes";
 import { todayInZone } from "@/lib/timezone";
+import { weekdayOf } from "@/lib/dates";
 import {
   calculateHabitPointsFromSnapshot,
+  effectiveTargetFor,
   resolveHabitSnapshot,
   taskContribution,
 } from "@/lib/scoring";
@@ -47,6 +49,7 @@ type NewHabit = {
   pointValue: number;
   kind: HabitKind;
   targetCount: number;
+  weekdayTargets?: (number | null)[];
 };
 
 type NewTask = {
@@ -80,6 +83,8 @@ type NewEvent = {
 
 type WorkspaceValue = {
   habits: HabitDTO[];
+  archivedHabits: HabitDTO[];
+  allHabits: HabitDTO[];
   logs: HabitLogMap;
   occurrences: OccurrenceMap;
   taskProgress: TaskProgressMap;
@@ -117,6 +122,15 @@ type WorkspaceValue = {
   updateEvent: (id: number, patch: Partial<EventDTO>) => Promise<void>;
   deleteEvent: (id: number) => Promise<void>;
   logFocus: (input: { mode: string; seconds: number; habitId: number | null; taskId: number | null; day: string }) => Promise<void>;
+  /** The user's active or paused focus session (never more than one). */
+  focusSession: FocusDTO | null;
+  startFocusSession: (input: { mode: string; seconds: number; habitId: number | null; taskId: number | null }) => Promise<void>;
+  pauseFocusSession: () => Promise<void>;
+  resumeFocusSession: () => Promise<void>;
+  completeFocusSession: () => Promise<void>;
+  discardFocusSession: () => Promise<void>;
+  /** Re-fetches the active session so multiple tabs converge on the same one. */
+  refreshFocusSession: () => Promise<void>;
   saveSettings: (patch: Partial<SettingsDTO>) => Promise<void>;
   setTheme: (theme: ThemeId, custom?: CustomThemeInput) => void;
   MAX_HABITS: number;
@@ -153,6 +167,7 @@ export function WorkspaceProvider({
 }) {
   const toast = useToast();
   const [habits, setHabits] = useState<HabitDTO[]>(initial.habits);
+  const [archivedHabits, setArchivedHabits] = useState<HabitDTO[]>(initial.archivedHabits ?? []);
   const [logs, setLogs] = useState<HabitLogMap>(initial.logs);
   const [occurrences, setOccurrences] = useState<OccurrenceMap>(initial.occurrences);
   const [taskProgress, setTaskProgressMap] = useState<TaskProgressMap>(initial.taskProgress);
@@ -301,7 +316,9 @@ export function WorkspaceProvider({
        * the habit's current configuration while the request is in flight.
        */
       const habit = habits.find((h) => h.id === habitId);
-      const resolved = habit ? resolveHabitSnapshot(habit, beforeEntry ?? null) : null;
+      const resolved = habit
+        ? resolveHabitSnapshot(habit, beforeEntry ?? null, effectiveTargetFor(habit, day, weekdayOf))
+        : null;
       const optimisticPoints = resolved ? calculateHabitPointsFromSnapshot(next, resolved) : 0;
       setLogs((prev) => ({
         ...prev,
@@ -347,7 +364,7 @@ export function WorkspaceProvider({
     (habitId: number, day: string) => {
       const habit = habits.find((h) => h.id === habitId);
       if (!habit) return;
-      const target = Math.max(1, habit.targetCount);
+      const target = effectiveTargetFor(habit, day, weekdayOf);
       const current = logs[String(habitId)]?.[day]?.count ?? 0;
       const next = current >= target ? 0 : current + 1;
       void setHabitCount(habitId, day, next);
@@ -371,10 +388,12 @@ export function WorkspaceProvider({
         kind: input.kind,
         pointValue: input.pointValue,
         targetCount: input.targetCount,
+        weekdayTargets: input.weekdayTargets ?? [],
         days: input.days,
         scheduleTimes: input.scheduleTimes ?? [],
         sortOrder: habits.length,
         enabled: true,
+        archivedAt: null,
       };
       setHabits((prev) => [...prev, optimistic]);
       try {
@@ -405,20 +424,31 @@ export function WorkspaceProvider({
     [habits, toast],
   );
 
-  const deleteHabit = useCallback(
+const deleteHabit = useCallback(
     async (id: number) => {
-      const before = habits;
+      const beforeHabits = habits;
+      const beforeArchived = archivedHabits;
       const target = habits.find((h) => h.id === id);
+      // Optimistic: remove from active immediately.
       setHabits((prev) => prev.filter((h) => h.id !== id));
       try {
-        await api(`/api/habits`, "DELETE", { id });
-        toast.push(target ? `“${target.name}” deleted` : "Habit deleted");
+        const res = (await api(`/api/habits`, "DELETE", { id })) as {
+          archived?: boolean;
+          habit?: HabitDTO;
+          message?: string;
+        };
+        if (res.archived && res.habit) {
+          // Keep the archived DTO so historical scoring still resolves past days.
+          setArchivedHabits((prev) => [...prev, res.habit!]);
+        }
+        toast.push(res.message ?? (target ? `"${target.name}" deleted` : "Habit deleted"));
       } catch (err) {
-        setHabits(before);
+        setHabits(beforeHabits);
+        setArchivedHabits(beforeArchived);
         toast.push((err as Error).message, "error");
       }
     },
-    [habits, toast],
+    [habits, archivedHabits, toast],
   );
 
   const moveHabit = useCallback(
@@ -615,6 +645,8 @@ export function WorkspaceProvider({
         taskId: input.taskId,
         day: input.day,
         startedAt: new Date(Date.now() - input.seconds * 1000).toISOString(),
+        endsAt: null,
+        remainingSeconds: null,
       };
       setFocus((prev) => [...prev, optimistic]);
       try {
@@ -643,6 +675,109 @@ export function WorkspaceProvider({
     },
     [toast],
   );
+
+  /**
+   * Keeps the `focus` array exactly consistent with the server's single active
+   * session: every non-completed entry is replaced by the latest known session
+   * (or dropped when there is none). Completed history is left untouched, and a
+   * finalized session (complete/skip-from-another-tab) replaces itself in the
+   * list once.
+   */
+  const commitSession = useCallback(
+    (session: FocusDTO | null, progress?: { progress: number; points: number } | null) => {
+      setFocus((prev) => {
+        if (session?.completed) {
+          const rest = prev.filter((f) => f.id !== session.id);
+          return [session, ...rest.filter((f) => f.completed)];
+        }
+        const base = prev.filter((f) => f.completed);
+        return session ? [session, ...base] : base;
+      });
+      if (progress && session && session.taskId && session.day) {
+        setTaskProgressMap((prev) => ({
+          ...prev,
+          [String(session.taskId)]: {
+            ...(prev[String(session.taskId)] ?? {}),
+            [session.day!]: { progress: progress.progress, points: progress.points },
+          },
+        }));
+      }
+    },
+    [setTaskProgressMap],
+  );
+
+  const focusSession = useMemo(
+    () => focus.find((f) => !f.completed) ?? null,
+    [focus],
+  );
+
+  const refreshFocusSession = useCallback(async () => {
+    try {
+      const res = (await api("/api/focus/session", "GET")) as { session: FocusDTO | null };
+      commitSession(res.session);
+    } catch {
+      // Silent — the next visibility/tick reconcile will retry.
+    }
+  }, [commitSession]);
+
+  const startFocusSession = useCallback(
+    async (input: { mode: string; seconds: number; habitId: number | null; taskId: number | null }) => {
+      const safeMode = (
+        input.mode === "short_break" || input.mode === "long_break" ? input.mode : "focus"
+      ) as FocusDTO["mode"];
+      const now = Date.now();
+      // Optimistic single-tap feedback; the server upsert is authoritative.
+      const optimistic: FocusDTO = {
+        id: -now,
+        mode: safeMode,
+        seconds: input.seconds,
+        completed: false,
+        habitId: input.habitId,
+        taskId: input.taskId,
+        day: today,
+        startedAt: new Date(now).toISOString(),
+        endsAt: new Date(now + input.seconds * 1000).toISOString(),
+        remainingSeconds: null,
+      };
+      commitSession(optimistic);
+      try {
+        const res = (await api("/api/focus/session", "POST", {
+          action: "start",
+          mode: input.mode,
+          seconds: input.seconds,
+          habitId: input.habitId,
+          taskId: input.taskId,
+        })) as { session: FocusDTO | null };
+        commitSession(res.session);
+      } catch (err) {
+        // The server did not create anything; reconcile with it.
+        void refreshFocusSession();
+        toast.push((err as Error).message, "error");
+      }
+    },
+    [commitSession, refreshFocusSession, today, toast],
+  );
+
+  const sessionAction = useCallback(
+    async (action: "pause" | "resume" | "complete" | "reset" | "skip") => {
+      try {
+        const res = (await api("/api/focus/session", "POST", { action })) as {
+          session: FocusDTO | null;
+          progress?: { progress: number; points: number } | null;
+        };
+        commitSession(res.session, res.progress);
+      } catch (err) {
+        void refreshFocusSession();
+        toast.push((err as Error).message, "error");
+      }
+    },
+    [commitSession, refreshFocusSession, toast],
+  );
+
+  const pauseFocusSession = useCallback(() => sessionAction("pause"), [sessionAction]);
+  const resumeFocusSession = useCallback(() => sessionAction("resume"), [sessionAction]);
+  const completeFocusSession = useCallback(() => sessionAction("complete"), [sessionAction]);
+  const discardFocusSession = useCallback(() => sessionAction("reset"), [sessionAction]);
 
   const saveSettings = useCallback(
     async (patch: Partial<SettingsDTO>) => {
@@ -683,6 +818,9 @@ export function WorkspaceProvider({
   const value = useMemo<WorkspaceValue>(
     () => ({
       habits,
+      archivedHabits,
+      /** Every habit (active + archived) — feeds scoring so archived history keeps resolving. */
+      allHabits: [...habits, ...archivedHabits],
       logs,
       occurrences,
       taskProgress,
@@ -712,6 +850,13 @@ export function WorkspaceProvider({
       updateEvent,
       deleteEvent,
       logFocus,
+      focusSession,
+      startFocusSession,
+      pauseFocusSession,
+      resumeFocusSession,
+      completeFocusSession,
+      discardFocusSession,
+      refreshFocusSession,
       saveSettings,
       setTheme,
       MAX_HABITS,
@@ -720,11 +865,13 @@ export function WorkspaceProvider({
         .reduce((acc, h) => acc + h.pointValue, 0),
     }),
     [
-      habits, logs, occurrences, taskProgress, tasks, events, focus, settings, today, busy,
+      habits, archivedHabits, logs, occurrences, taskProgress, tasks, events, focus, settings, today, busy,
       setTaskProgress,
       setHabitCount, toggleOccurrence, occurrenceFor, cycleHabit, countFor, isDone, taskProgressFor,
       createHabit, updateHabit, deleteHabit, moveHabit, createTask, updateTask,
       deleteTask, createEvent, updateEvent, deleteEvent, logFocus, saveSettings, setTheme,
+      focusSession, startFocusSession, pauseFocusSession, resumeFocusSession,
+      completeFocusSession, discardFocusSession, refreshFocusSession,
     ],
   );
 

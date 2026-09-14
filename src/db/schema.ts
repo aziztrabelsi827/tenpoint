@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   serial,
@@ -83,12 +84,19 @@ export const habits = pgTable(
     pointValue: doublePrecision("point_value").notNull().default(1),
     /** How many occurrences per day this habit is meant to be completed. */
     targetCount: integer("target_count").notNull().default(1),
+    /**
+     * JSON text, length 7, indexed Sun(0)..Sat(6). Each entry is a whole number
+     * 1..20 overriding `targetCount` for that weekday, or null to fall back to it.
+     */
+    weekdayTargets: text("weekday_targets").notNull().default("[]"),
     /** JSON encoded number[] of weekday indexes (0=Sun). Empty = every day. */
     days: text("days").notNull().default("[]"),
     /** JSON encoded string[] of "HH:MM" times when scheduled on the calendar. */
     scheduleTimes: text("schedule_times").notNull().default("[]"),
     sortOrder: integer("sort_order").notNull().default(0),
     enabled: boolean("enabled").notNull().default(true),
+    /** NULL = active. NOT NULL = archived (hidden from the current UI). */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("habits_user_slug_idx").on(t.userId, t.slug)],
@@ -255,9 +263,60 @@ export const focusSessions = pgTable(
     day: date("day", { mode: "string" }).notNull(),
     /** When the session actually started, so the calendar can position it. */
     startedAt: timestamp("started_at", { withTimezone: true }),
+    /** Absolute instant the current run must end while RUNNING (else NULL). */
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    /** Frozen countdown (seconds) while PAUSED; NULL otherwise. */
+    remainingSeconds: integer("remaining_seconds"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("focus_sessions_user_day_idx").on(t.userId, t.day)],
+  (t) => [
+    index("focus_sessions_user_day_idx").on(t.userId, t.day),
+    index("focus_sessions_active_idx")
+      .on(t.userId, t.id)
+      .where(sql`${t.completed} is not true`),
+  ],
+);
+
+/* ------------------------------------------------------------------ */
+/* Push subscriptions                                                  */
+/* ------------------------------------------------------------------ */
+
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  id: serial("id").primaryKey(),
+  userId: uuid("user_id").notNull(),
+  endpoint: text("endpoint").notNull(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  userAgent: text("user_agent").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+}, (t) => [
+  uniqueIndex("push_subscriptions_endpoint_idx").on(t.endpoint),
+  index("push_subscriptions_user_idx").on(t.userId),
+]);
+
+/* ------------------------------------------------------------------ */
+/* Scheduled reminders (idempotent 30-min-before queue)                */
+/* ------------------------------------------------------------------ */
+
+export const scheduledReminders = pgTable(
+  "scheduled_reminders",
+  {
+    id: serial("id").primaryKey(),
+    userId: uuid("user_id").notNull(),
+    sourceType: text("source_type").notNull(), // 'task' | 'event'
+    sourceId: integer("source_id").notNull(),
+    title: text("title").notNull().default(""),
+    scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+    reminderType: text("reminder_type").notNull().default("30min_before"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("scheduled_reminders_due_idx").on(t.scheduledFor),
+    index("scheduled_reminders_user_idx").on(t.userId),
+  ],
 );
 
 export type UserRow = typeof profiles.$inferSelect;

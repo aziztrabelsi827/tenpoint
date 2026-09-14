@@ -6,9 +6,9 @@ import { BarChart } from "@/components/charts";
 import { useWorkspace } from "@/components/workspace";
 import { formatDuration, addDays, rangeKeys, startOfMonth } from "@/lib/dates";
 import { formatPoints } from "@/lib/format";
-import { focusTotals } from "@/lib/stats";
+import { focusTotals, taskProgressFor } from "@/lib/stats";
 import { contribution, formatMinutes } from "@/lib/tasks";
-import { taskProgressFor } from "@/lib/stats";
+import { focusSessionStatus, type FocusSessionStatus } from "@/lib/types";
 
 type Mode = "focus" | "short_break" | "long_break";
 
@@ -19,14 +19,31 @@ const MODE_META: Record<Mode, { label: string; color: string; hint: string }> = 
 };
 
 export function TimerView() {
-  const { habits, tasks, focus, settings, taskProgress, today, logFocus, saveSettings } =
-    useWorkspace();
+  const {
+    habits,
+    tasks,
+    focus,
+    settings,
+    taskProgress,
+    today,
+    focusSession,
+    startFocusSession,
+    pauseFocusSession,
+    resumeFocusSession,
+    completeFocusSession,
+    discardFocusSession,
+    refreshFocusSession,
+    saveSettings,
+  } = useWorkspace();
   const toast = useToast();
 
+  // `mode` only describes the NEXT idle session. While a session is active its
+  // own persisted mode is authoritative, so a backgrounded/reloaded tab always
+  // shows exactly what ran.
   const [mode, setMode] = useState<Mode>("focus");
-  const [running, setRunning] = useState(false);
-  const [remaining, setRemaining] = useState(settings.focusMinutes * 60);
-  const [completedFocus, setCompletedFocus] = useState(0);
+  // Only a re-render clock: each tick re-derives the countdown from the ABSOLUTE
+  // `endsAt` stored on the server, never from a decrementing local counter.
+  const [now, setNow] = useState(() => Date.now());
   const [habitId, setHabitId] = useState("");
   const [taskId, setTaskId] = useState("");
   const [draft, setDraft] = useState({
@@ -47,8 +64,13 @@ export function TimerView() {
     return () => mq.removeEventListener("change", update);
   }, []);
 
-  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const totalFor = useCallback(
+  const status: FocusSessionStatus = useMemo(
+    () => focusSessionStatus(focusSession),
+    [focusSession],
+  );
+  const effectiveMode: Mode = focusSession ? (focusSession.mode as Mode) : mode;
+
+  const idleTotal = useCallback(
     (m: Mode) =>
       m === "focus"
         ? draft.focusMinutes * 60
@@ -58,58 +80,77 @@ export function TimerView() {
     [draft],
   );
 
-  useEffect(() => {
-    if (!running) {
-      if (tickRef.current) clearInterval(tickRef.current);
-      return;
+  const total = focusSession ? focusSession.seconds : idleTotal(effectiveMode);
+
+  const remaining = useMemo(() => {
+    if (!focusSession) return idleTotal(effectiveMode);
+    if (status === "running" && focusSession.endsAt) {
+      return Math.max(0, Math.ceil((Date.parse(focusSession.endsAt) - now) / 1000));
     }
-    tickRef.current = setInterval(() => {
-      setRemaining((r) => {
-        if (r <= 1) return 0;
-        return r - 1;
-      });
-    }, 1000);
-    return () => {
-      if (tickRef.current) clearInterval(tickRef.current);
-    };
-  }, [running]);
+    if (status === "paused") {
+      return focusSession.remainingSeconds ?? focusSession.seconds;
+    }
+    return focusSession.seconds;
+  }, [focusSession, status, now, idleTotal, effectiveMode]);
 
-  const finish = useCallback(
-    (skipped: boolean) => {
-      setRunning(false);
-      if (mode === "focus" && !skipped) {
-        void logFocus({
-          mode: "focus",
-          seconds: totalFor("focus"),
-          habitId: habitId ? Number(habitId) : null,
-          taskId: taskId ? Number(taskId) : null,
-          day: today,
-        });
-        const next = completedFocus + 1;
-        setCompletedFocus(next);
-        toast.push(`Focus session complete · +${Math.round(totalFor("focus") / 60)}m logged`);
-        const isLong = next % Math.max(2, draft.sessionsBeforeLongBreak) === 0;
-        const nextMode: Mode = isLong ? "long_break" : "short_break";
-        setMode(nextMode);
-        setRemaining(totalFor(nextMode));
-        return;
-      }
-      toast.push(mode === "focus" ? "Session skipped" : "Break finished — back to focus", "info");
-      setMode("focus");
-      setRemaining(totalFor("focus"));
-    },
-    [mode, totalFor, logFocus, habitId, taskId, today, completedFocus, draft.sessionsBeforeLongBreak, toast],
-  );
-
-  // Finish the block when the countdown reaches zero. Deferred so no state is
-  // set synchronously inside the effect body.
+  // Tick only while running; each tick just refreshes `now` so the ring and
+  // clock re-render from `endsAt - now`.
   useEffect(() => {
-    if (remaining !== 0 || !running) return;
-    const id = setTimeout(() => finish(false), 0);
-    return () => clearTimeout(id);
-  }, [remaining, running, finish]);
+    if (status !== "running") return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [status]);
 
-  const todayFocus = useMemo(() => focusTotals(focus, [today]), [focus, today]);
+  const completingRef = useRef(false);
+  const completeActive = useCallback(async () => {
+    if (completingRef.current) return;
+    completingRef.current = true;
+    const wasFocus = effectiveMode === "focus";
+    try {
+      await completeFocusSession();
+      toast.push(
+        wasFocus
+          ? `Focus session complete · +${Math.round(total / 60)}m logged`
+          : "Break finished — back to focus",
+        wasFocus ? "info" : "info",
+      );
+    } finally {
+      completingRef.current = false;
+    }
+  }, [completeFocusSession, effectiveMode, total, toast]);
+
+  // Finish the instant endsAt passes, even if this tab was suspended: the
+  // server row already knows the real end time, so this is just a fast path.
+  useEffect(() => {
+    if (status !== "running" || remaining !== 0) return;
+    void completeActive();
+  }, [status, remaining, completeActive]);
+
+  // Returning to the tab/window after a lock, close, or another tab interaction:
+  // recompute immediately, auto-finalize anything expired, and pull the latest
+  // server row so multiple tabs converge on a single session.
+  const reconcile = useCallback(() => {
+    setNow(Date.now());
+    void refreshFocusSession();
+  }, [refreshFocusSession]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") reconcile();
+    };
+    const onFocus = () => reconcile();
+    const onShow = () => reconcile();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("pageshow", onShow);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pageshow", onShow);
+    };
+  }, [reconcile]);
+
+  const focusToday = useMemo(() => focusTotals(focus, [today]).sessions, [focus, today]);
   const monthKeys = useMemo(() => rangeKeys(startOfMonth(today), today), [today]);
   const monthFocus = useMemo(() => focusTotals(focus, monthKeys), [focus, monthKeys]);
   const allTimeFocus = useMemo(() => focusTotals(focus, focus.map((f) => f.day)), [focus]);
@@ -134,22 +175,59 @@ export function TimerView() {
     [focus],
   );
 
-  const total = totalFor(mode);
   const progress = total === 0 ? 0 : (total - remaining) / total;
-  const meta = MODE_META[mode];
+  const meta = MODE_META[effectiveMode];
   const minutes = Math.floor(remaining / 60);
   const seconds = remaining % 60;
   const clock = `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   const r = (size - 20) / 2;
   const c = 2 * Math.PI * r;
-  const linkedHabit = habits.find((h) => String(h.id) === habitId);
-  const linkedTask = tasks.find((t) => String(t.id) === taskId);
+  const linkedHabit =
+    status === "idle"
+      ? habits.find((h) => String(h.id) === habitId)
+      : habits.find((h) => h.id === focusSession!.habitId);
+  const linkedTask =
+    status === "idle"
+      ? tasks.find((t) => String(t.id) === taskId)
+      : tasks.find((t) => t.id === focusSession!.taskId);
 
-  function changeMode(next: Mode) {
-    setRunning(false);
-    setMode(next);
-    setRemaining(totalFor(next));
-  }
+  const primaryLabel =
+    status === "running" ? "⏸ Pause" : status === "paused" ? "▶ Resume" : "▶ Start";
+
+  const onPrimary = useCallback(() => {
+    if (status === "idle") {
+      void startFocusSession({
+        mode,
+        seconds: idleTotal(mode),
+        habitId: habitId ? Number(habitId) : null,
+        taskId: taskId ? Number(taskId) : null,
+      });
+      toast.push(effectiveMode === "focus" ? "Focus session started" : "Break started");
+    } else if (status === "running") {
+      void pauseFocusSession();
+    } else {
+      void resumeFocusSession();
+    }
+  }, [status, mode, idleTotal, habitId, taskId, effectiveMode, startFocusSession, pauseFocusSession, resumeFocusSession, toast]);
+
+  const onReset = useCallback(() => {
+    void discardFocusSession();
+    toast.push("Session cancelled", "info");
+  }, [discardFocusSession, toast]);
+
+  const onSkip = useCallback(() => {
+    void discardFocusSession();
+    setMode("focus");
+    toast.push("Session skipped", "info");
+  }, [discardFocusSession, toast]);
+
+  const changeMode = useCallback(
+    (next: Mode) => {
+      if (status !== "idle") return;
+      setMode(next);
+    },
+    [status],
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -164,7 +242,7 @@ export function TimerView() {
         </div>
         <Segmented
           ariaLabel="Timer mode"
-          value={mode}
+          value={effectiveMode}
           onChange={changeMode}
           options={[
             { value: "focus", label: "Focus" },
@@ -201,7 +279,7 @@ export function TimerView() {
                 {clock}
               </p>
               <p className="mt-1 text-xs" style={{ color: "var(--fg-muted)" }}>
-                {Math.round(total / 60)} minute {mode === "focus" ? "session" : "break"}
+                {Math.round(total / 60)} minute {effectiveMode === "focus" ? "session" : "break"}
               </p>
             </div>
           </div>
@@ -210,19 +288,25 @@ export function TimerView() {
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-2">
-            <button type="button" className="btn btn-primary" onClick={() => setRunning((r) => !r)}>
-              {running ? "⏸ Pause" : "▶ Start"}
+            <button type="button" className="btn btn-primary" onClick={onPrimary}>
+              {primaryLabel}
             </button>
-            <button type="button" className="btn" onClick={() => { setRunning(false); setRemaining(total); }}>
+            <button type="button" className="btn" onClick={onReset} disabled={status === "idle"}>
               ↺ Reset
             </button>
-            <button type="button" className="btn" onClick={() => finish(true)}>
+            <button type="button" className="btn" onClick={onSkip} disabled={status === "idle"}>
               ⏭ Skip
             </button>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2 text-center">
-            <span className="chip">Session {completedFocus + 1} today (in view)</span>
+            <span className="chip">
+              {status === "running"
+                ? "● Running"
+                : status === "paused"
+                  ? "⏸ Paused"
+                  : `${focusToday} focus sessions today`}
+            </span>
             <span className="chip">
               Long break every {draft.sessionsBeforeLongBreak} sessions
             </span>
@@ -234,8 +318,9 @@ export function TimerView() {
               <select
                 className="input"
                 aria-label="Link a habit"
-                value={habitId}
+                value={status === "idle" ? habitId : ""}
                 onChange={(e) => setHabitId(e.target.value)}
+                disabled={status !== "idle"}
               >
                 <option value="">No habit</option>
                 {habits.map((h) => (
@@ -247,8 +332,9 @@ export function TimerView() {
               <select
                 className="input"
                 aria-label="Link a task"
-                value={taskId}
+                value={status === "idle" ? taskId : ""}
                 onChange={(e) => setTaskId(e.target.value)}
+                disabled={status !== "idle"}
               >
                 <option value="">No task</option>
                 {tasks
@@ -287,7 +373,7 @@ export function TimerView() {
 
         <aside className="flex min-w-0 flex-col gap-4">
           <div className="grid gap-4">
-            <Stat label="Today's focus time" value={formatDuration(todayFocus.seconds)} sub={`${todayFocus.sessions} sessions completed`} accent="var(--primary)" />
+            <Stat label="Today's focus time" value={formatDuration(focusTotals(focus, [today]).seconds)} sub={`${focusTotals(focus, [today]).sessions} sessions completed`} accent="var(--primary)" />
             <Stat label="This week" value={formatDuration(focusTotals(focus, weekKeys).seconds)} sub={`${focusTotals(focus, weekKeys).sessions} sessions`} accent="var(--accent)" />
             <Stat label="This month" value={formatDuration(monthFocus.seconds)} sub={`${monthFocus.sessions} sessions since ${startOfMonth(today).slice(0, 7)}`} accent="var(--positive)" />
             <Stat label="All time" value={formatDuration(allTimeFocus.seconds)} sub={`${allTimeFocus.sessions} sessions logged`} accent="var(--warn)" />
@@ -328,9 +414,12 @@ export function TimerView() {
               type="button"
               className="btn btn-primary mt-4 w-full"
               onClick={() => {
+                // Saving timer preferences mid-run is deliberately destructive:
+                // the active session is discarded rather than stretched to the
+                // new plan, so the DB never holds a session whose shape no
+                // longer matches what the user configured.
+                void discardFocusSession();
                 void saveSettings(draft);
-                setRunning(false);
-                setRemaining(totalFor(mode));
                 toast.push("Timer settings saved");
               }}
             >

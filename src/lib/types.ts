@@ -45,11 +45,20 @@ export type HabitDTO = {
   pointValue: number;
   /** Target occurrences per day, e.g. 5 prayers or 3 exercise sessions. */
   targetCount: number;
+  /**
+   * Optional per-weekday overrides of the daily target, indexed Sun(0)..Sat(6).
+   * Always length 7; a `null` entry means the habit's global `targetCount`
+   * applies that day. Only meaningful for positive habits (a negative habit has
+   * unlimited occurrences and a fixed penalty, so its targets are ignored).
+   */
+  weekdayTargets: (number | null)[];
   days: number[];
   /** "HH:MM" times when this habit is scheduled on the calendar. */
   scheduleTimes: string[];
   sortOrder: number;
   enabled: boolean;
+  /** NULL = active. NOT NULL = archived (hidden from the current UI, kept for historical scoring). */
+  archivedAt: string | null;
 };
 
 export type TaskDTO = {
@@ -98,7 +107,29 @@ export type FocusDTO = {
   day: string;
   /** ISO timestamp of when the session actually started, if known. */
   startedAt: string | null;
+  /**
+   * Absolute instant the current run must end, present ONLY while RUNNING
+   * (completed = false). The countdown is always `endsAt - now`, never a
+   * decrementing tick count, so it stays correct across sleep/backgrounding.
+   */
+  endsAt: string | null;
+  /**
+   * Frozen countdown (seconds) while PAUSED (completed = false, endsAt = null).
+   * Resuming recomputes endsAt = now + remainingSeconds.
+   */
+  remainingSeconds: number | null;
 };
+
+/** Lifecycle of a persisted focus session row. */
+export type FocusSessionStatus = "idle" | "running" | "paused";
+
+/** Derives the timer lifecycle from the persisted row (source of truth). */
+export function focusSessionStatus(
+  f: Pick<FocusDTO, "completed" | "endsAt" | "remainingSeconds"> | null,
+): FocusSessionStatus {
+  if (!f || f.completed) return "idle";
+  return f.endsAt != null ? "running" : "paused";
+}
 
 export type SettingsDTO = {
   theme: string;
@@ -177,7 +208,10 @@ export type TaskProgressEntry = {
 export type TaskProgressMap = Record<string, Record<string, TaskProgressEntry>>;
 
 export type WorkspaceDTO = {
+  /** Active (non-archived) habits — drives the current UI. */
   habits: HabitDTO[];
+  /** Archived habits — hidden from current UI, kept for historical scoring. */
+  archivedHabits: HabitDTO[];
   logs: HabitLogMap;
   /** Occurrence-level habit records; sparse (only where they exist). */
   occurrences: OccurrenceMap;
@@ -189,3 +223,18 @@ export type WorkspaceDTO = {
   /** The user's local calendar date at load time. */
   today: string;
 };
+
+/** True when a habit is archived (removed from the current workspace). */
+export function isArchivedHabit(h: { archivedAt: string | null }): boolean {
+  return h.archivedAt !== null;
+}
+
+/** Splits every stored habit into the current (active) and archived lists. */
+export function splitHabits(
+  all: HabitDTO[],
+): { active: HabitDTO[]; archived: HabitDTO[] } {
+  return {
+    active: all.filter((h) => !isArchivedHabit(h)),
+    archived: all.filter(isArchivedHabit),
+  };
+}

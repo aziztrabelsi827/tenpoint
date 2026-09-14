@@ -21,6 +21,8 @@ import {
   perOccurrenceValue,
   scoreDay,
 } from "@/lib/stats";
+import { effectiveTargetFor } from "@/lib/scoring";
+import { WEEKDAY_TARGET_MAX, WEEKDAY_TARGET_MIN, emptyWeekdayTargets, normaliseWeekdayTargets } from "@/lib/weekday-targets";
 import type { HabitDTO, HabitKind } from "@/lib/types";
 
 export const ICON_CHOICES = [
@@ -210,7 +212,7 @@ export function HabitGrid({
   manage?: boolean;
 }) {
   const {
-    habits, logs, cycleHabit, setHabitCount, updateHabit, deleteHabit, moveHabit,
+    habits, allHabits, logs, cycleHabit, setHabitCount, updateHabit, deleteHabit, moveHabit,
     MAX_HABITS, today, taskProgress, tasks,
   } = useWorkspace();
   const toast = useToast();
@@ -299,7 +301,7 @@ export function HabitGrid({
                 weekContribution += habitContributionFor(habit, logs, k, today);
                 weekTarget += habitKindFor(habit, logs, k, today) === "negative"
                   ? 0
-                  : Math.max(1, e?.targetCountAtRecord ?? habit.targetCount);
+                  : Math.max(1, e?.targetCountAtRecord ?? effectiveTargetFor(habit, k, weekdayOf));
               }
               return (
                 <tr key={habit.id} className={habit.enabled ? "" : "opacity-45"}>
@@ -353,7 +355,7 @@ export function HabitGrid({
                     // the habit's current enabled state or weekday schedule.
                     const scheduledToday = !!logEntry || isScheduled(habit, key, weekdayOf);
                     const count = countFor(logs, habit.id, key);
-                    const t = Math.max(1, habit.targetCount);
+                    const t = effectiveTargetFor(habit, key, weekdayOf);
                     const full = count >= t;
                     return (
                       <td key={key} className="text-center">
@@ -460,7 +462,7 @@ export function HabitGrid({
               </td>
               {weekKeys.map((key) => {
                 const day = scoreDay(
-                  { habits, habitLogs: logs, tasks, taskProgress, today },
+                  { habits: allHabits, habitLogs: logs, tasks, taskProgress, today },
                   key,
                   weekdayOf,
                 );
@@ -484,7 +486,7 @@ export function HabitGrid({
                   let days = 0;
                   for (const key of weekKeys) {
                     const sc = scoreDay(
-                      { habits, habitLogs: logs, tasks, taskProgress, today },
+                      { habits: allHabits, habitLogs: logs, tasks, taskProgress, today },
                       key,
                       weekdayOf,
                     );
@@ -531,7 +533,9 @@ export function HabitGrid({
       <ConfirmDialog
         open={confirmId !== null}
         title={`Delete “${target?.name ?? "habit"}”?`}
-        message="Habits with recorded history are archived instead, so your past ratings stay accurate. Habits with no history are removed permanently."
+        message={target?.archivedAt
+          ? "This habit is already archived and hidden from your workspace."
+          : "If it has recorded history, it will be archived (removed from everyday lists) so your past ratings stay accurate. If it has no history, it is deleted permanently."}
         confirmLabel="Delete"
         onCancel={() => setConfirmId(null)}
         onConfirm={() => {
@@ -567,6 +571,7 @@ export function HabitEditor({
   const [kind, setKind] = useState<HabitKind>("positive");
   const [pointValue, setPointValue] = useState("2");
   const [targetCount, setTargetCount] = useState("1");
+  const [weekdayTargets, setWeekdayTargets] = useState<(number | null)[]>(emptyWeekdayTargets());
   const [error, setError] = useState("");
 
   const initial = useMemo(
@@ -582,6 +587,7 @@ export function HabitEditor({
             kind: habit.kind,
             pointValue: String(habit.pointValue),
             targetCount: String(habit.targetCount),
+            weekdayTargets: normaliseWeekdayTargets(habit.weekdayTargets),
           }
         : null,
     [habit],
@@ -600,6 +606,7 @@ export function HabitEditor({
     setKind(initial?.kind ?? "positive");
     setPointValue(initial?.pointValue ?? "2");
     setTargetCount(initial?.targetCount ?? "1");
+    setWeekdayTargets(initial?.weekdayTargets ?? emptyWeekdayTargets());
     setError("");
   }
   if (!open && syncKey !== "") setSyncKey("");
@@ -632,6 +639,7 @@ export function HabitEditor({
       kind,
       pointValue: w,
       targetCount: kind === "negative" ? 1 : target,
+      weekdayTargets: kind === "negative" ? undefined : normaliseWeekdayTargets(weekdayTargets),
       days: [...days].sort((a, b) => a - b),
       scheduleTimes: [...scheduleTimes].sort(),
     };
@@ -833,6 +841,50 @@ export function HabitEditor({
                   </button>
                 );
               })}
+            </div>
+          </div>
+        ) : null}
+
+        {kind === "positive" ? (
+          <div>
+            <span className="field-label">
+              Per-weekday targets <span style={{ color: "var(--fg-subtle)" }}>(optional)</span>
+            </span>
+            <p className="mb-2 text-[11px]" style={{ color: "var(--fg-subtle)" }}>
+              Override the daily target for specific weekdays. Blank uses the{" "}
+              {targetCount}×/day global target on that day.
+            </p>
+            <div className="grid grid-cols-7 gap-1.5">
+              {WEEKDAY_LABELS.map((label, idx) => (
+                <div key={label} className="flex flex-col gap-1">
+                  <span
+                    className="text-center text-[10px] font-semibold uppercase"
+                    style={{ color: "var(--fg-muted)" }}
+                  >
+                    {label.slice(0, 2)}
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={WEEKDAY_TARGET_MIN}
+                    max={WEEKDAY_TARGET_MAX}
+                    placeholder={String(target)}
+                    aria-label={`Target on ${label}`}
+                    className="input num"
+                    style={{ padding: "0.25rem 0", textAlign: "center" }}
+                    value={weekdayTargets[idx] ?? ""}
+                    onChange={(e) =>
+                      setWeekdayTargets((prev) => {
+                        const v = e.target.value;
+                        const n = v === "" ? null : Math.max(WEEKDAY_TARGET_MIN, Math.min(WEEKDAY_TARGET_MAX, Math.round(Number(v) || 0)));
+                        const next = [...prev];
+                        next[idx] = n;
+                        return next;
+                      })
+                    }
+                  />
+                </div>
+              ))}
             </div>
           </div>
         ) : null}

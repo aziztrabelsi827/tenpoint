@@ -33,7 +33,7 @@ const RANGES: { value: RangeId; label: string }[] = [
 ];
 
 export function StatsView() {
-  const { habits, logs, tasks, focus, taskProgress, today } = useWorkspace();
+  const { habits, allHabits, logs, tasks, focus, taskProgress, today } = useWorkspace();
   const [range, setRange] = useState<RangeId>("30");
   const [allTime, setAllTime] = useState<AllTimeStats | null>(null);
 
@@ -56,8 +56,8 @@ export function StatsView() {
   }, [range]);
 
   const ctx: ScoringContext = useMemo(
-    () => ({ habits, habitLogs: logs, tasks, taskProgress, today }),
-    [habits, logs, tasks, taskProgress, today],
+    () => ({ habits: allHabits, habitLogs: logs, tasks, taskProgress, today }),
+    [allHabits, logs, tasks, taskProgress, today],
   );
 
   const allActive = range === "all" && allTime !== null;

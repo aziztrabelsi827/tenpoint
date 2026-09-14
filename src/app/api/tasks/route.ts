@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUserContext } from "@/lib/auth";
+import { cancelReminderFor, scheduleReminderFor } from "@/lib/reminders";
 import { sanitizeMaxPoints } from "@/lib/tasks";
 import { upsertTaskProgress } from "@/lib/task-progress";
 import { normaliseTimezone, todayInZone } from "@/lib/timezone";
@@ -128,6 +129,16 @@ async function userTodayFor(userId: string, supabase: SupabaseClient) {
   return todayInZone(normaliseTimezone(data?.timezone));
 }
 
+/** Server-side resolution of the user's IANA timezone via Supabase. */
+async function userTimezoneFor(userId: string, supabase: SupabaseClient) {
+  const { data } = await supabase
+    .from("user_settings")
+    .select("timezone")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return normaliseTimezone(data?.timezone);
+}
+
 export async function POST(request: Request) {
   const ctx = await requireUserContext();
   if (!ctx) return NextResponse.json({ error: "You must be signed in." }, { status: 401 });
@@ -196,6 +207,20 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: "Could not create the task." }, { status: 500 });
 
   const task = serialise(mapTaskRow(inserted as Record<string, unknown>));
+
+  // Queue a 30-minute reminder for the scheduled task. The helper skips
+  // automatically when there is no schedule or the fire time is already past.
+  const timezone = await userTimezoneFor(userId, supabase);
+  await scheduleReminderFor(
+    supabase,
+    userId,
+    "task",
+    task.id,
+    task.title,
+    task.day,
+    task.startTime,
+    timezone,
+  );
 
   // Optional initial progress, recorded against the user's local today.
   const progress = Math.max(0, Math.min(TASK_PROGRESS_LIMIT, Math.round(Number(body.progress ?? 0) * 100) / 100));
@@ -337,6 +362,27 @@ export async function PATCH(request: Request) {
   }
 
   /**
+   * Keep the reminder in sync with the task's schedule and status. Completed or
+   * archived tasks never remind; tasks without a schedule never remind. A
+   * reschedule replaces the pending reminder via scheduleReminderFor.
+   */
+  const timezone = await userTimezoneFor(userId, supabase);
+  if (task.status === "completed" || task.status === "archived" || !task.day || !task.startTime) {
+    await cancelReminderFor(supabase, userId, "task", task.id);
+  } else {
+    await scheduleReminderFor(
+      supabase,
+      userId,
+      "task",
+      task.id,
+      task.title,
+      task.day,
+      task.startTime,
+      timezone,
+    );
+  }
+
+  /**
    * Task-progress snapshots are IMMUTABLE to configuration changes.
    *
    * A progress log records one day's progress and the reward that day earned.
@@ -426,6 +472,8 @@ export async function DELETE(request: Request) {
       .eq("user_id", userId);
     if (archiveError) return NextResponse.json({ error: "Could not archive the task." }, { status: 500 });
 
+    await cancelReminderFor(supabase, userId, "task", body.id);
+
     return NextResponse.json({
       ok: true,
       archived: true,
@@ -435,6 +483,7 @@ export async function DELETE(request: Request) {
 
   const { error: deleteError } = await supabase.from("tasks").delete().eq("id", body.id).eq("user_id", userId);
   if (deleteError) return NextResponse.json({ error: "Could not delete the task." }, { status: 500 });
+  await cancelReminderFor(supabase, userId, "task", body.id);
   return NextResponse.json({ ok: true, archived: false });
 }
 
